@@ -5,6 +5,15 @@ The CRT effects must stay cheap: CPU, RAM, and GPU use each stay within 1.20 tim
 
 Status: early setup. There is no runnable terminal yet.
 
+## First steps
+
+```sh
+git clone <repository> && cd retro-term
+cargo xtask doctor                               # report missing tools
+cargo xtask worktree create my-task --base main  # isolated task checkout
+cd .worktrees/my-task && cargo xtask check       # the same checks as CI
+```
+
 - [Contributing](CONTRIBUTING.md)
 - [Architecture](docs/architecture.md)
 - [Development](docs/development.md)

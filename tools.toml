@@ -1,0 +1,5 @@
+# Pinned auxiliary tools. `cargo xtask doctor` checks them; CI installs these exact versions.
+[tools]
+cargo-deny = "0.22.1"
+actionlint = "1.7.12"
+zizmor = "1.33.1"

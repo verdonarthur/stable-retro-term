@@ -1,6 +1,6 @@
 # Developer tools, worktrees, and CI
 
-Status: pending. Planning done; implementation has not started.
+Status: implemented, in review. deny/actionlint/zizmor steps not run locally (tools missing). See handoff.
 Dependencies: 01 completed.
 
 ## Context and shared rules
@@ -134,5 +134,22 @@ If the pinned tools are not installed, say so and report the skipped steps. Do n
 
 ## Handoff
 
-Record base SHA, worktree path, changed files, decisions, exact commands/results, unrun checks, artifact locations, and blockers.
-Update this plan and the index status only when supported by evidence.
+- Base: `4385b08` on `main`. Worktree: `.worktrees/02-dev-tools`, branch `02-dev-tools`. 
+- Changed files: `xtask/{Cargo.toml,src/{main,process,report,doctor,check,worktree}.rs,tests/{cli,worktree}.rs}`,
+  `Cargo.lock`, `tools.toml`, `deny.toml`, `.github/{workflows/ci.yml,dependabot.yml,pull_request_template.md}`,
+  `AGENTS.md`, `CONTRIBUTING.md`, `README.md`, `docs/{development,ai-workflow}.md`,
+  `docs/AI/{README.md,architecture/retro-terminal.md,implementation/02-developer-tools-and-ci.md}`.
+- Deviations:
+  - Added `toml` dependency to read `tools.toml` and `rust-toolchain.toml`.
+  - Added `check --step/--skip` so CI jobs `check` and `deny` share the implementation.
+  - `remove` does not check unmerged commits: the branch is never deleted, so commits are never lost.
+  - Worktree commands write no JSON file; `list --json` prints to stdout only.
+- Results (2026-11-24, toolchain 1.94.0):
+  - `cargo test --locked -p xtask`: 19 passed.
+  - `cargo xtask doctor`: exit 3; git, rustup, toolchain pass; cargo-deny, actionlint, zizmor missing.
+  - `cargo xtask check`: exit 3; fmt, check, clippy, test pass; deny, actionlint, zizmor missing.
+  - `cargo xtask check --allow-missing`: exit 0.
+- Not run: cargo-deny, actionlint, zizmor (not installed); CI workflow on GitHub (no remote yet).
+- Artifacts: `target/xtask/{doctor,check}.json`, `target/xtask/logs/`.
+- Pending GitHub settings (after the remote exists): branch protection on `main` requiring `check` and `deny`;
+  allow Dependabot PRs to run workflows; keep auto-merge disabled.

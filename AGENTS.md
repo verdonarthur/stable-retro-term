@@ -14,10 +14,11 @@ Do not add a shared "core" crate, plugin system, or backend traits without a con
 Run these before you hand off work:
 
 ```sh
-cargo fmt --all -- --check
-cargo check --locked --workspace --all-targets
-cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo xtask check
 ```
+
+It runs the same steps as CI. If a pinned tool is not installed, run `cargo xtask doctor`.
+See [development](docs/development.md) for the plain Cargo equivalents.
 
 Use only project tooling to verify work. Do not write ad-hoc verification scripts or start extra servers.
 Report the checks that you ran and the checks that you did not run.
@@ -30,4 +31,5 @@ Report the checks that you ran and the checks that you did not run.
 ## Workflow
 
 - Do not commit, push, or open a pull request unless the user asks.
-- Do new branch work in a Git worktree under `.worktrees/` (ignored by Git).
+- Do new branch work in a Git worktree: `cargo xtask worktree create <task> --base <rev>`.
+- Follow [the AI workflow](docs/ai-workflow.md) for task flow and handoff.
