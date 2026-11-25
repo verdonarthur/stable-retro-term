@@ -27,10 +27,24 @@ jobs:
       - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
       - name: Read pinned tools
         id: tools
-        run: echo "list=$(sed -n 's/^\(actionlint\|zizmor\) = "\(.*\)"$/\1@\2/p' tools.toml | paste -sd, -)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "zizmor=zizmor@$(sed -n 's/^zizmor = "\(.*\)"$/\1/p' tools.toml)" >> "$GITHUB_OUTPUT"
+          echo "actionlint=$(sed -n 's/^actionlint = "\(.*\)"$/\1/p' tools.toml)" >> "$GITHUB_OUTPUT"
+      # install-action does not support actionlint, so install it from the GitHub release.
+      - name: Install actionlint
+        env:
+          VERSION: ${{ steps.tools.outputs.actionlint }}
+        run: |
+          archive="actionlint_${VERSION}_linux_amd64.tar.gz"
+          base="https://github.com/rhysd/actionlint/releases/download/v${VERSION}"
+          curl -fsSLO "$base/$archive"
+          curl -fsSL "$base/actionlint_${VERSION}_checksums.txt" | grep " ${archive}$" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "$archive" -C "$HOME/.local/bin" actionlint
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
-          tool: ${{ steps.tools.outputs.list }}
+          tool: ${{ steps.tools.outputs.zizmor }}
       - run: cargo xtask check --skip deny
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
