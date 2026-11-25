@@ -1,0 +1,278 @@
+name: Release
+
+# Verify, package, measure, gate, and publish one existing draft release.
+# release-please.yml calls it after a release PR merge. Run it by hand to retry or rehearse a tag.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z)
+        required: true
+        type: string
+      sha:
+        description: Commit the tag must point to
+        required: true
+        type: string
+      dry_run:
+        description: Stop before publication
+        required: true
+        type: boolean
+      allow_failed_gate:
+        description: Publish even if the performance gate is not met (recorded in the release notes)
+        required: false
+        default: false
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (vX.Y.Z)
+        required: true
+        type: string
+      sha:
+        description: Commit the tag must point to (empty means the tag's commit)
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: Stop before publication
+        required: false
+        default: true
+        type: boolean
+      allow_failed_gate:
+        description: Publish even if the performance gate is not met (recorded in the release notes)
+        required: false
+        default: false
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve the source commit
+        id: source
+        env:
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          resolved="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          if [ -n "$SHA" ] && [ "$SHA" != "$resolved" ]; then
+            echo "::error::tag $TAG points to $resolved, expected $SHA"
+            exit 1
+          fi
+          echo "sha=$resolved" >> "$GITHUB_OUTPUT"
+      - name: Verify tag, versions, and changelog
+        env:
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ steps.source.outputs.sha }}
+        run: cargo xtask release verify --tag "$TAG" --source-sha "$SHA"
+
+  package:
+    name: package
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read pinned tools
+        id: tools
+        run: |
+          echo "deny=cargo-deny@$(sed -n 's/^cargo-deny = "\(.*\)"$/\1/p' tools.toml)" >> "$GITHUB_OUTPUT"
+          echo "dist=$(sed -n 's/^dist = "\(.*\)"$/\1/p' tools.toml)" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: ${{ steps.tools.outputs.deny }}
+      # install-action does not support cargo-dist, so build the pinned version.
+      - name: Install dist
+        env:
+          VERSION: ${{ steps.tools.outputs.dist }}
+        run: cargo install --locked "cargo-dist@${VERSION}"
+      # Workflow linters already ran in PR CI; the tagged revision is rechecked for code and dependencies.
+      - run: cargo xtask check --skip actionlint --skip zizmor
+      - name: Package the tagged revision
+        env:
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ needs.verify.outputs.sha }}
+        run: cargo xtask package --check --tag "$TAG" --source-sha "$SHA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-${{ inputs.tag }}
+          path: |
+            target/distrib/*.tar.xz
+            target/distrib/*.tar.xz.sha256
+            target/xtask/package/identity.json
+          if-no-files-found: error
+          retention-days: 30
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-logs-${{ inputs.tag }}
+          path: target/xtask/
+          retention-days: 14
+
+  performance:
+    name: performance
+    needs: [verify, package]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/performance.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ syntax
+    with:
+      gpu_label: ${{ vars.RETRO_GPU_LABEL }}
+      package_artifact: package-${{ inputs.tag }}
+      sha: ${{ needs.verify.outputs.sha }}
+      tag: ${{ inputs.tag }}
+
+  gate:
+    name: gate
+    needs: [verify, package, performance]
+    # Without the manual override, a failed or skipped performance job blocks the gate.
+    if: >-
+      !cancelled() && needs.package.result == 'success'
+      && (needs.performance.result == 'success' || inputs.allow_failed_gate)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-${{ inputs.tag }}
+          path: target
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        # With the override, missing reports are recorded by the gate instead of stopping here.
+        continue-on-error: ${{ inputs.allow_failed_gate }}
+        with:
+          name: performance-${{ inputs.tag }}
+          path: target/perf/release
+      - name: Decide the release gate
+        env:
+          SHA: ${{ needs.verify.outputs.sha }}
+          ALLOW_FAILED_GATE: ${{ inputs.allow_failed_gate }}
+        run: |
+          override=()
+          if [ "$ALLOW_FAILED_GATE" = "true" ]; then override=(--allow-failed-gate); fi
+          cargo xtask release gate --identity target/xtask/package/identity.json \
+            --reports target/perf/release --gate benchmarks/release-gate.toml \
+            --source-sha "$SHA" "${override[@]}"
+      # A fixed layout, so the publish job finds the notes whatever else exists.
+      - name: Collect the gate evidence
+        if: always()
+        run: |
+          mkdir -p target/release-gate/reports
+          for file in target/xtask/release-gate.json target/xtask/release-gate-notes.md; do
+            if [ -f "$file" ]; then cp "$file" target/release-gate/; fi
+          done
+          if [ -d target/perf/release ]; then cp -R target/perf/release/. target/release-gate/reports/; fi
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gate-${{ inputs.tag }}
+          path: target/release-gate/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: publish
+    needs: [verify, gate]
+    if: >-
+      !cancelled() && needs.verify.result == 'success' && needs.gate.result == 'success'
+      && !inputs.dry_run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The only job with write access. It never checks out or runs the packaged code.
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ inputs.tag }}
+      SHA: ${{ needs.verify.outputs.sha }}
+      ALLOW_FAILED_GATE: ${{ inputs.allow_failed_gate }}
+      RUN_ID: ${{ github.run_id }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-${{ inputs.tag }}
+          path: package
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gate-${{ inputs.tag }}
+          path: gate
+      - name: Check checksums
+        working-directory: package/distrib
+        run: sha256sum -c ./*.sha256
+      - name: Check the draft release and the tag
+        run: |
+          gh release view "$TAG" --json tagName --jq .tagName | grep -Fxq "$TAG"
+          tag_sha="$(gh api "repos/${GH_REPO}/commits/${TAG}" --jq .sha)"
+          if [ "$tag_sha" != "$SHA" ]; then
+            echo "::error::tag $TAG points to $tag_sha, expected $SHA"
+            exit 1
+          fi
+      - name: Attach performance evidence of an overridden gate
+        if: hashFiles('gate/release-gate-notes.md') != ''
+        run: |
+          if [ "$ALLOW_FAILED_GATE" != "true" ]; then
+            echo "::error::gate notes exist without allow_failed_gate"
+            exit 1
+          fi
+          tar -czf "package/distrib/performance-evidence-${TAG}-run${RUN_ID}.tar.gz" -C gate .
+      - name: Upload assets without replacing different bytes
+        run: |
+          existing="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          for file in package/distrib/*; do
+            name="$(basename "$file")"
+            if printf '%s\n' "$existing" | grep -Fxq "$name"; then
+              rm -rf previous && mkdir previous
+              gh release download "$TAG" --pattern "$name" --dir previous
+              if ! cmp -s "$file" "previous/$name"; then
+                echo "::error::release asset $name exists with different bytes"
+                exit 1
+              fi
+            else
+              gh release upload "$TAG" "$file"
+            fi
+          done
+      - name: Record the overridden gate in the release notes
+        if: hashFiles('gate/release-gate-notes.md') != ''
+        run: |
+          marker="<!-- retro-term gate override, run ${RUN_ID} -->"
+          body="$(gh release view "$TAG" --json body --jq .body)"
+          if ! printf '%s' "$body" | grep -Fq "$marker"; then
+            printf '%s\n\n%s\n%s\n' "$body" "$marker" "$(cat gate/release-gate-notes.md)" > notes.md
+            gh release edit "$TAG" --notes-file notes.md
+          fi
+      - name: Publish the draft
+        run: |
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "true" ]; then
+            gh release edit "$TAG" --draft=false
+          fi

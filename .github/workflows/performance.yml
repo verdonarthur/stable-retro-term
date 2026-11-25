@@ -7,6 +7,21 @@ on:
         description: Runner label unique to the physical GPU
         required: true
         type: string
+      package_artifact:
+        description: Packaged release artifact to measure instead of a source build
+        required: false
+        default: ""
+        type: string
+      sha:
+        description: Source commit of the packaged release
+        required: false
+        default: ""
+        type: string
+      tag:
+        description: Release tag of the packaged release
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -17,7 +32,9 @@ concurrency:
 
 jobs:
   compare:
-    if: github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: >-
+      inputs.package_artifact == '' && github.ref_protected
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on:
       - self-hosted
       - Linux
@@ -44,3 +61,39 @@ jobs:
           name: performance-reports
           path: target/perf/
           retention-days: 14
+
+  # Measures the packaged release binary for every preset in benchmarks/release-gate.toml.
+  release:
+    if: >-
+      inputs.package_artifact != '' && github.ref_protected
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on:
+      - self-hosted
+      - Linux
+      - ${{ inputs.gpu_label }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.package_artifact }}
+          path: target
+      - name: Check and extract the package
+        run: |
+          (cd target/distrib && sha256sum -c ./*.sha256)
+          mkdir -p target/xtask/package/extract
+          tar -xJf target/distrib/*.tar.xz -C target/xtask/package/extract
+      - name: Measure every release preset
+        run: >-
+          cargo xtask release measure --identity target/xtask/package/identity.json
+          --gate benchmarks/release-gate.toml --baseline alacritty --output-dir target/perf/release
+      - name: Upload the release reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: performance-${{ inputs.tag }}
+          path: target/perf/release/
+          retention-days: 30

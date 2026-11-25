@@ -24,22 +24,40 @@ const SCENARIOS: [&str; 8] = [
 #[derive(Parser)]
 pub(crate) struct Args {
     #[arg(long)]
-    candidate: PathBuf,
+    pub(crate) candidate: PathBuf,
     /// Measure the candidate with its CRT effects bypassed.
     #[arg(long)]
-    candidate_plain: bool,
+    pub(crate) candidate_plain: bool,
     #[arg(long)]
-    baseline: PathBuf,
+    pub(crate) baseline: PathBuf,
     #[arg(long)]
-    suite: PathBuf,
+    pub(crate) suite: PathBuf,
     #[arg(long)]
-    output: PathBuf,
+    pub(crate) output: PathBuf,
     /// Check the host, tools and configurations before running timed workloads.
     #[arg(long)]
-    preflight: bool,
+    pub(crate) preflight: bool,
     /// Run one scenario for diagnosis. A partial run cannot pass the gate.
     #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(SCENARIOS), conflicts_with = "preflight")]
-    scenario: Option<String>,
+    pub(crate) scenario: Option<String>,
+    /// Resource ratio limit as N/D. The report records it.
+    #[arg(long, default_value = "7/5")]
+    pub(crate) limit: Limit,
+}
+
+/// A ratio limit `numerator / denominator`, both greater than zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub(crate) struct Limit(pub(crate) u32, pub(crate) u32);
+
+impl std::str::FromStr for Limit {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let parse = |part: &str| part.parse::<u32>().ok().filter(|value| *value > 0);
+        text.split_once('/')
+            .and_then(|(n, d)| Some(Self(parse(n)?, parse(d)?)))
+            .ok_or_else(|| format!("expected N/D with N and D greater than 0, got `{text}`"))
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -128,7 +146,7 @@ pub(crate) fn run(args: &Args) -> Outcome {
     let candidate = binary(&args.candidate);
     let baseline = binary(&args.baseline);
     let mut report = json!({
-        "schema": 1, "status": "unverified", "preflight": args.preflight, "scenario": args.scenario,
+        "schema": 1, "status": "unverified", "limit": args.limit, "preflight": args.preflight, "scenario": args.scenario,
         "source": source, "dirty": dirty, "suite": suite,
         "candidate_mode": if args.candidate_plain { "plain" } else { "static-crt" },
         "candidate": candidate, "baseline": baseline,
@@ -161,6 +179,7 @@ pub(crate) fn run(args: &Args) -> Outcome {
     let request = json!({
         "suite": suite, "suite_path": suite_path, "config": config,
         "candidate_plain": args.candidate_plain, "candidate_config": candidate_config,
+        "limit": args.limit,
         "candidate": candidate, "baseline": baseline, "preflight": args.preflight, "scenario": args.scenario,
     });
     let driver = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/perf/run.py");

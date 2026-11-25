@@ -59,6 +59,40 @@ fn invalid_suite_and_missing_binary_have_distinct_exit_codes() {
 }
 
 #[test]
+fn reports_record_the_ratio_limit() {
+    let temp = tempfile::tempdir().unwrap();
+    let report = temp.path().join("report.json");
+    let missing = temp.path().join("no-such-terminal");
+    let run = |limit: Option<&str>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
+        command
+            .current_dir(root())
+            .arg("perf")
+            .arg("--candidate")
+            .arg(&missing)
+            .arg("--baseline")
+            .arg(&missing)
+            .args(["--suite", "benchmarks/scenarios.toml", "--output"])
+            .arg(&report)
+            .arg("--preflight");
+        if let Some(limit) = limit {
+            command.args(["--limit", limit]);
+        }
+        command.output().unwrap().status.code()
+    };
+    let limit = || {
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report).unwrap()).unwrap();
+        report["limit"].clone()
+    };
+    assert_eq!(run(None), Some(3));
+    assert_eq!(limit(), serde_json::json!([7, 5]));
+    assert_eq!(run(Some("6/5")), Some(3));
+    assert_eq!(limit(), serde_json::json!([6, 5]));
+    assert_eq!(run(Some("0/5")), Some(2));
+}
+
+#[test]
 fn rejects_a_mismatched_baseline_before_display_access() {
     let temp = tempfile::tempdir().unwrap();
     let baseline = temp.path().join("baseline");

@@ -465,7 +465,8 @@ def run_suite(request, driver, env, directory, report):
                 pair[kind] = leg(request, driver, env, directory, kind, scenario)
             matching(pair)
             pairs.append(pair)
-        metrics = {metric: compare(pairs, metric, gpu_resolution) for metric in METRICS}
+        limit = tuple(request["limit"])
+        metrics = {metric: compare(pairs, metric, gpu_resolution, limit) for metric in METRICS}
         failed = any(pair["baseline"]["valid"] and pair["candidate"].get("workload_status") == "failed"
                      for pair in pairs)
         statuses = {entry["status"] for entry in metrics.values()}

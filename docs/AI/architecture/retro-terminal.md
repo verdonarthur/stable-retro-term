@@ -301,7 +301,10 @@ Flow after ordinary development merges:
    Distribution-specific formats such as AppImage/deb/rpm are later additions, not assumed to work from a tarball build.
 6. Run package smoke tests and the full resource gate against the actual packaged executable, for every shipped preset.
    Bind reports to the source SHA, executable checksum, toolchain/configuration, hardware, and baseline version.
-   Missing, stale, failing, or inconclusive evidence cannot authorize publication.
+   Missing, stale, failing, or inconclusive evidence cannot authorize publication by default.
+   Exception: a person can set the manual input `allow_failed_gate: true` (manual or reusable-workflow run only,
+   never on a push-triggered release). The release then publishes, its notes state that the performance gate
+   was not met or not verified, and the gate summary and reports are attached. Integrity checks still block.
 7. The publication job attaches the validated artifacts/checksums and publishes the existing draft release automatically.
    No extra manual publishing step is needed after the release PR merge when all gates pass.
 
@@ -314,7 +317,8 @@ Keep credentials in GitHub configuration, never in the repository or AI prompts.
 Serialize releases per version and make retries idempotent.
 A failure leaves the draft unpublished with diagnostics; a retry validates the same tag and artifact identity.
 Never move a published tag or overwrite different released bytes. A defective published version needs a new corrective release.
-Provide a manual recovery workflow that selects an existing release tag and reruns the same gates; it is not a bypass.
+Provide a manual recovery workflow that selects an existing release tag and reruns the same gates.
+Its only bypass is the explicit, recorded `allow_failed_gate` override of the performance gate.
 Exercise the pipeline with a non-publication rehearsal before enabling the bot's publication job.
 The configured bot is authorized to perform its release lifecycle after merge; this does not grant an interactive AI agent blanket push/merge rights.
 

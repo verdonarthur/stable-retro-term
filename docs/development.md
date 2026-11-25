@@ -18,6 +18,10 @@ install command. It never installs anything.
 | `cargo xtask check --step clippy` / `--skip deny` | Run only, or leave out, some steps |
 | `cargo xtask check --allow-missing` | Do not fail because a pinned tool is not installed |
 | `cargo xtask run` | Launch the Wayland terminal with development diagnostics and your [configuration](configuration.md) |
+| `cargo xtask package --check [--tag vX.Y.Z --source-sha <sha>]` | Build the release archive with the pinned `dist` and check it. Never publishes |
+| `cargo xtask release verify --tag vX.Y.Z --source-sha <sha>` | Check that tag, commit, versions, lockfile, manifest, and changelog agree |
+| `cargo xtask release measure --identity <file> --gate <file> --baseline alacritty --output-dir <dir>` | Measure the packaged binary for every gate preset (GPU host only) |
+| `cargo xtask release gate --identity <file> --reports <dir> --gate <file> --source-sha <sha> [--allow-failed-gate]` | Decide from report files whether the release may publish |
 | `cargo xtask worktree create <name> --base <rev>` | New worktree `.worktrees/<name>` on branch `<name>` |
 | `cargo xtask worktree list [--json]` | Show worktrees, branches, and dirty state |
 | `cargo xtask worktree remove <name> [--force]` | Remove a worktree; the branch is kept |
@@ -89,5 +93,6 @@ under `docs/AI/`. `--force` removes it anyway, after it copies those `docs/AI/` 
 ## CI
 
 `.github/workflows/ci.yml` runs on pull requests and pushes to `main`. Jobs: `check`
-(`cargo xtask check --skip deny`) and `deny` (`cargo xtask check --step deny`). On failure, `target/xtask/` is uploaded
-as an artifact. Dependabot opens weekly grouped updates for Cargo and GitHub Actions; nothing merges automatically.
+(`cargo xtask check --skip deny`), `deny` (`cargo xtask check --step deny`), and `package`
+(`cargo xtask package --check`). On failure, `target/xtask/` is uploaded
+as an artifact. The release workflows are described in [releasing](releasing.md). Dependabot opens weekly grouped updates for Cargo and GitHub Actions; nothing merges automatically.

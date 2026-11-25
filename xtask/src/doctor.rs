@@ -98,6 +98,7 @@ fn install_hint(tool: &str, version: &str) -> String {
         "actionlint" => {
             format!("go install github.com/rhysd/actionlint/cmd/actionlint@v{version}")
         }
+        "dist" => format!("cargo install --locked cargo-dist@{version}"),
         _ => format!("cargo install --locked {tool}@{version}"),
     }
 }
@@ -116,5 +117,13 @@ mod tests {
         assert!(has_version("cargo-deny 0.22.1", "0.22.1"));
         assert!(has_version("v1.7.12\ninstalled by go", "1.7.12"));
         assert!(!has_version("zizmor 1.33.10", "1.33.1"));
+    }
+
+    #[test]
+    fn dist_hint_installs_the_cargo_dist_crate() {
+        assert_eq!(
+            install_hint("dist", "0.34.0"),
+            "cargo install --locked cargo-dist@0.34.0"
+        );
     }
 }
