@@ -2,6 +2,9 @@
 resolver = "3"
 members = ["crates/*", "xtask"]
 
+[workspace.dependencies]
+alacritty_terminal = { version = "0.26.0", default-features = false }
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"

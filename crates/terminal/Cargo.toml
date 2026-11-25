@@ -6,5 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+alacritty_terminal.workspace = true
+
 [lints]
 workspace = true
