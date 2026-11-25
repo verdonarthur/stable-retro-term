@@ -25,6 +25,9 @@ const SCENARIOS: [&str; 8] = [
 pub(crate) struct Args {
     #[arg(long)]
     candidate: PathBuf,
+    /// Measure the candidate with its CRT effects bypassed.
+    #[arg(long)]
+    candidate_plain: bool,
     #[arg(long)]
     baseline: PathBuf,
     #[arg(long)]
@@ -118,6 +121,7 @@ pub(crate) fn run(args: &Args) -> Outcome {
     let mut report = json!({
         "schema": 1, "status": "unverified", "preflight": args.preflight, "scenario": args.scenario,
         "source": source, "dirty": dirty, "suite": suite,
+        "candidate_mode": if args.candidate_plain { "plain" } else { "static-crt" },
         "candidate": candidate, "baseline": baseline,
     });
     let python = find_in_path("python3");
@@ -147,6 +151,7 @@ pub(crate) fn run(args: &Args) -> Outcome {
         .map_err(|e| io_failure(&args.suite, &e))?;
     let request = json!({
         "suite": suite, "suite_path": suite_path, "config": config,
+        "candidate_plain": args.candidate_plain,
         "candidate": candidate, "baseline": baseline, "preflight": args.preflight, "scenario": args.scenario,
     });
     let driver = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/perf/run.py");

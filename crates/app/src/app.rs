@@ -35,6 +35,10 @@ pub fn run(development: bool) -> AppResult<()> {
 }
 
 pub fn run_with_program(development: bool, program: Option<Program>) -> AppResult<()> {
+    run_with_mode(development, false, program)
+}
+
+pub fn run_with_mode(development: bool, plain: bool, program: Option<Program>) -> AppResult<()> {
     use winit::platform::wayland::EventLoopBuilderExtWayland;
     let events = EventLoop::<Event>::with_user_event()
         .with_wayland()
@@ -44,6 +48,7 @@ pub fn run_with_program(development: bool, program: Option<Program>) -> AppResul
         state: None,
         error: None,
         development,
+        plain,
         program,
     };
     events.run_app(&mut app)?;
@@ -55,6 +60,7 @@ struct App {
     state: Option<State>,
     error: Option<Box<dyn Error>>,
     development: bool,
+    plain: bool,
     program: Option<Program>,
 }
 
@@ -86,7 +92,8 @@ struct State {
     scroll_fraction: f64,
     gpu_recovered: bool,
     development: bool,
-    previous_ime_cursor: Option<(GridSize, Position)>,
+    plain: bool,
+    previous_ime_cursor: Option<(GridSize, Position, [u32; 2])>,
 }
 
 impl State {
@@ -94,6 +101,7 @@ impl State {
         events: &ActiveEventLoop,
         proxy: EventLoopProxy<Event>,
         development: bool,
+        plain: bool,
         program: Option<Program>,
     ) -> AppResult<Self> {
         let window = Arc::new(
@@ -105,7 +113,7 @@ impl State {
             )?,
         );
         window.set_ime_allowed(true);
-        let mut renderer = create_renderer(events, &window, development)?;
+        let mut renderer = create_renderer(events, &window, development, plain)?;
         let (font_size, line_height) = scene::font_metrics(window.scale_factor());
         let cell_width = renderer.cell_width(font_size, line_height);
         let fallback = INITIAL_SIZE.to_physical::<u32>(window.scale_factor());
@@ -141,6 +149,7 @@ impl State {
             scroll_fraction: 0.0,
             gpu_recovered: false,
             development,
+            plain,
             previous_ime_cursor: None,
         };
         state.resize(state.window.inner_size())?;
@@ -216,7 +225,13 @@ impl State {
 
     fn pointer_cell(&self, clamp: bool) -> Option<Position> {
         let point = self.pointer?;
-        scene::cell_at(point.x, point.y, self.grid, clamp)
+        scene::pointer_cell(
+            [point.x, point.y],
+            self.renderer.size(),
+            self.renderer.mode(),
+            self.grid,
+            clamp,
+        )
     }
 
     fn drag(&mut self) {
@@ -247,16 +262,28 @@ impl State {
         let now = Instant::now();
         let snapshot = self.session.snapshot();
         let cursor_position = snapshot.cursor.position;
-        let ime_cursor = cursor_position.map(|position| (snapshot.size, position));
-        if let Some((grid, position)) = ime_cursor
+        let viewport = self.renderer.size();
+        let ime_cursor = cursor_position.map(|position| (snapshot.size, position, viewport));
+        if let Some((grid, position, viewport)) = ime_cursor
             && ime_cursor != self.previous_ime_cursor
         {
+            let mode = self.renderer.mode();
+            let x = f64::from(position.column) * f64::from(grid.cell_width);
+            let y = f64::from(position.row) * f64::from(grid.cell_height);
+            let [left, top] = mode.display_point([x, y], viewport);
+            let [right, bottom] = mode.display_point(
+                [
+                    x + f64::from(grid.cell_width),
+                    y + f64::from(grid.cell_height),
+                ],
+                viewport,
+            );
             self.window.set_ime_cursor_area(
-                PhysicalPosition::new(
-                    u32::from(position.column) * u32::from(grid.cell_width),
-                    u32::from(position.row) * u32::from(grid.cell_height),
+                PhysicalPosition::new(left.floor() as u32, top.floor() as u32),
+                PhysicalSize::new(
+                    (right.ceil() - left.floor()) as u32,
+                    (bottom.ceil() - top.floor()) as u32,
                 ),
-                PhysicalSize::new(u32::from(grid.cell_width), u32::from(grid.cell_height)),
             );
         }
         self.previous_ime_cursor = ime_cursor;
@@ -288,7 +315,8 @@ impl State {
                 self.scheduler.retry(now);
             }
             Frame::RecreateDevice if !self.gpu_recovered => {
-                self.renderer = create_renderer(events, &self.window, self.development)?;
+                self.renderer =
+                    create_renderer(events, &self.window, self.development, self.plain)?;
                 self.gpu_recovered = true;
                 self.resize(self.window.inner_size())?;
                 self.scheduler.retry(now);
@@ -384,10 +412,16 @@ fn create_renderer(
     events: &ActiveEventLoop,
     window: &Arc<Window>,
     development: bool,
+    plain: bool,
 ) -> AppResult<SurfaceRenderer> {
-    let renderer = pollster::block_on(SurfaceRenderer::new(
+    let renderer = pollster::block_on(SurfaceRenderer::with_mode(
         platform::graphics(events),
         window.clone(),
+        if plain {
+            retro_renderer::RenderMode::Plain
+        } else {
+            retro_renderer::RenderMode::StaticCrt
+        },
     ))?;
     if development {
         let adapter = renderer.adapter_info();
@@ -407,6 +441,7 @@ impl ApplicationHandler<Event> for App {
                 events,
                 self.proxy.clone(),
                 self.development,
+                self.plain,
                 self.program.take(),
             )
             .map(|state| self.state = Some(state)),

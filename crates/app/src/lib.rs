@@ -12,4 +12,4 @@ mod scene;
 mod scheduler;
 
 #[cfg(target_os = "linux")]
-pub use app::{run, run_with_program};
+pub use app::{run, run_with_mode, run_with_program};

@@ -43,6 +43,17 @@ pub(crate) fn cell_at(x: f64, y: f64, grid: GridSize, clamp: bool) -> Option<Pos
     })
 }
 
+pub(crate) fn pointer_cell(
+    point: [f64; 2],
+    viewport: [u32; 2],
+    mode: retro_renderer::RenderMode,
+    grid: GridSize,
+    clamp: bool,
+) -> Option<Position> {
+    let [x, y] = mode.source_point(point, viewport);
+    cell_at(x, y, grid, clamp)
+}
+
 fn bounds(position: Position, grid: GridSize) -> Rect {
     let width = u32::from(grid.cell_width);
     let height = u32::from(grid.cell_height);
@@ -302,6 +313,29 @@ mod tests {
         assert_eq!(
             cell_at(81.0, -1.0, grid, true),
             Some(Position { column: 9, row: 0 })
+        );
+    }
+
+    #[test]
+    fn distorted_selection_maps_edges_and_preserves_padding() {
+        use retro_renderer::RenderMode;
+
+        let size = [85, 61];
+        let grid = grid_size(size, 8, 20).unwrap();
+        let crt = RenderMode::StaticCrt;
+        let last_cell = Some(Position { column: 9, row: 2 });
+        let last_cell_pixel = crt.display_point([79.0, 59.0], size);
+        assert_eq!(
+            pointer_cell(last_cell_pixel, size, crt, grid, false),
+            last_cell
+        );
+        let padding = crt.display_point([82.0, 60.5], size);
+        assert_eq!(pointer_cell(padding, size, crt, grid, false), None);
+        assert_eq!(pointer_cell(padding, size, crt, grid, true), last_cell);
+        assert_eq!(pointer_cell([0.0, 0.0], size, crt, grid, false), None);
+        assert_eq!(
+            pointer_cell([0.0, 0.0], size, RenderMode::Plain, grid, false),
+            Some(Position { column: 0, row: 0 })
         );
     }
 

@@ -1,8 +1,9 @@
 # Performance baseline
 
-The plain renderer must stay within 1.40 times Alacritty for emulator CPU time,
-steady and peak RSS, and attributable GPU engine time in each scenario. The
-suite also checks that expected output becomes visible before its deadline.
+Task 06 applies the 1.40× Alacritty ceiling to emulator CPU time, steady and
+peak RSS, and attributable GPU engine time in each scenario. Measure default
+static CRT and the plain bypass separately. The suite also checks that
+expected output becomes visible before its deadline.
 
 ## Measurement host
 
@@ -37,7 +38,8 @@ scenario interval.
 ```sh
 cargo build --locked --release -p retro-app --bin retro-term
 cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/preflight.json --preflight
-cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/report.json
+cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/static.json
+cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/plain.json --candidate-plain
 ```
 
 Preflight checks the baseline version and records binary, source, suite, and font
@@ -55,11 +57,18 @@ Use `--scenario output` with the same command to diagnose scrollback.
 The focused run records whether Alacritty forwards the injected wheel event
 to its PTY with mouse reporting enabled. A focused run cannot pass the gate.
 
-The harness runs 15 alternating-order pairs per scenario by default. It
+The checked-in suite runs 15 alternating-order pairs per scenario. It
 checks ordered display markers, idle cursor state, typed bytes, resize delivery,
 and cleanup after window close. Running preflight alone produces no measured
 results. If a capability is missing, consult the report before interpreting
 any individual result.
+
+The report records the candidate mode. Static CRT capture checks account for
+the projected grid, tint, and scanline phases. Plain and Alacritty capture
+checks use the rectangular grid and original colors. Compare each report to
+the Alacritty measurements from its own run and to the comparable results
+in the accepted [Task 05 baseline](decisions/05-renderer-baseline.md). Keep
+any metric with missing measurements or unresolved uncertainty open.
 
 The JSON report retains raw samples for each terminal as well as the fixture's
 separate CPU and RSS samples. Emulator CPU uses the kernel's process-wide

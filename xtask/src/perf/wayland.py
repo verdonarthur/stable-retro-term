@@ -136,6 +136,9 @@ class Wayland:
         buffer = sample.get_buffer()
         return info.width, info.height, info.stride[0], info.offset[0], buffer.extract_dup(0, buffer.get_size())
 
+    crt = False
+    crt_area = None
+
     def observe(self, color, grid, timeout, typed=None):
         end = time.monotonic() + timeout
         received = False
@@ -143,8 +146,12 @@ class Wayland:
             frame = self.frame(max(0, end - time.monotonic()))
             if frame:
                 received = True
-                evidence = visible(frame, color, grid)
+                previous = self.crt_area
+                area = previous[1] if previous is not None and previous[0] == grid else None
+                evidence = visible(frame, color, grid, crt=self.crt, area=area)
                 if evidence is not None and (typed is None or typed_cell(frame, evidence, grid, typed)):
+                    if self.crt:
+                        self.crt_area = grid, evidence["area"]
                     return evidence
         raise DisplayTimeout(f"missing visible marker {color} for grid {grid}", received)
 
@@ -158,6 +165,13 @@ class Wayland:
             if frame is None:
                 continue
             received = True
+            if evidence.get("crt"):
+                colors = crt_colors(color)
+                if any(all(pixel(frame, x + int(width * fraction), row) in colors
+                           for fraction in (0.5, 0.8))
+                       for row in range(y, y + height)):
+                    return
+                continue
             if any(
                 pixel(frame, x + width // 2, row) == expected
                 and pixel(frame, x + width - 2, row) == expected
@@ -217,7 +231,7 @@ class Wayland:
                   (self.session, {"finish": self.v("b", True)}, 0.0, float(-pixels)))
 
 
-def visible(frame, color, grid):
+def visible(frame, color, grid, crt=False, area=None):
     """Find the colored grid perimeter and probe the cursor cell inside it."""
     width, height, stride, offset, pixels = frame
     rows, cols, grid_width, grid_height = grid
@@ -228,6 +242,12 @@ def visible(frame, color, grid):
     cell_w, cell_h = grid_width // cols, grid_height // rows
     if not cell_w or not cell_h or cell_w * cols != grid_width or cell_h * rows != grid_height:
         return None
+    if crt:
+        if area is not None:
+            evidence = crt_evidence(frame, color, grid, area)
+            if evidence is not None:
+                return evidence
+        return visible_crt(frame, color, grid)
     pattern = bytes((color[2], color[1], color[0]))
     # The X byte is padding. Use repeated RGB samples at aligned pixel offsets.
     count = 0
@@ -271,6 +291,8 @@ def text_visible(frame, x, y, cell_w, cell_h, background):
 
 def typed_cell(frame, evidence, grid, typed):
     column, color = typed
+    if evidence.get("crt"):
+        return crt_glyph(frame, evidence["area"], grid, 3, column - 1, color)
     x, y, width, height = evidence["area"]
     rows, cols, _, _ = grid
     cell_w, cell_h = width // cols, height // rows
@@ -281,3 +303,86 @@ def typed_cell(frame, evidence, grid, typed):
         return False
     return any(pixel(frame, x + dx, y + dy) != background
                for dy in range(cell_h) for dx in range(cell_w))
+
+
+def crt_colors(color):
+    """sRGB readback of the shader's fixed gains and two scanline phases."""
+    def srgb(value, gain):
+        encoded = value / 255
+        linear = encoded / 12.92 if encoded <= 0.04045 else ((encoded + 0.055) / 1.055) ** 2.4
+        linear *= gain
+        encoded = 12.92 * linear if linear <= 0.0031308 else 1.055 * linear ** (1 / 2.4) - 0.055
+        return round(encoded * 255)
+
+    return tuple(bytes(srgb(value, gain * scan) for value, gain in zip(
+        reversed(color), (1.0, 1.0, 0.95))) for scan in (1.0, 0.88))
+
+
+def crt_point(area, fx, fy):
+    """Project a fractional source position from the visible grid extents."""
+    x, y, width, height = area
+    sx, sy = 2 * fx - 1, 2 * fy - 1
+    factor = 1 / 1.025
+    for _ in range(4):
+        factor = 1 / (1.025 + 0.018 * (sx * sx + sy * sy) * factor * factor)
+    axis_extent = 1 / (1.025 + 0.018 * 0.95 ** 2)
+    return (int(x + width * (1 + sx * factor / axis_extent) / 2),
+            int(y + height * (1 + sy * factor / axis_extent) / 2))
+
+
+def crt_glyph(frame, area, grid, row, col, color):
+    rows, cols, width, height = grid
+    cell_w, cell_h = width // cols, height // rows
+    colors = crt_colors(color)
+    samples = [
+        pixel(frame, *crt_point(area, (col + dx / cell_w) / cols,
+                                (row + dy / cell_h) / rows))
+        for dy in range(2, cell_h - 2)
+        for dx in range(1, cell_w - 1)
+    ]
+    # Require a marker behind the glyph and pixels brighter than either phase.
+    return any(sample in colors for sample in samples) and any(
+        sample and all(actual > base + 4 for actual, base in zip(sample, colors[0]))
+        for sample in samples
+    )
+
+
+def visible_crt(frame, color, grid):
+    width, height, stride, offset, pixels = frame
+    _, _, grid_width, grid_height = grid
+    marker = crt_colors(color)[0]
+    left, top, right, bottom = width, height, 0, 0
+    for y in range(height):
+        start = offset + y * stride
+        end = start + width * 4
+        first = pixels.find(marker, start, end)
+        while first != -1 and ((first - start) % 4 or first + 7 > end
+                               or pixels[first + 4:first + 7] != marker):
+            first = pixels.find(marker, first + 1, end)
+        if first == -1:
+            continue
+        last = pixels.rfind(marker, first, end)
+        while (last - start) % 4 or pixels[last - 4:last - 1] != marker:
+            last = pixels.rfind(marker, first, last + 2)
+        left = min(left, (first - start) // 4)
+        right = max(right, (last - start) // 4 + 1)
+        top = min(top, y)
+        bottom = y + 1
+    area = [left, top, right - left, bottom - top]
+    # Only the bright phase locates edges, so the height can lose one row at each end.
+    if not (0.90 * grid_width <= area[2] <= grid_width
+            and 0.90 * grid_height <= area[3] <= grid_height):
+        return None
+    return crt_evidence(frame, color, grid, area)
+
+
+def crt_evidence(frame, color, grid, area):
+    rows, cols, _, _ = grid
+    colors = crt_colors(color)
+    if not all(pixel(frame, *crt_point(area, fx, fy)) in colors
+               for fx in (0.2, 0.8) for fy in (0.5 / rows, 1 - 0.5 / rows)):
+        return None
+    if not all(crt_glyph(frame, area, grid, 2, col, color) for col in range(5)):
+        return None
+    cursor = pixel(frame, *crt_point(area, 1.5 / cols, 1.5 / rows))
+    return {"area": area, "cursor": cursor not in colors, "crt": True}
