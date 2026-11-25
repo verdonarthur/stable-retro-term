@@ -30,4 +30,5 @@ Report the checks that you ran and the checks that you did not run.
 ## Workflow
 
 - Do not commit, push, or open a pull request unless the user asks.
+- Do not add `Co-Authored-By` trailers for AI agents to commit messages.
 - Do new branch work in a Git worktree under `.worktrees/` (ignored by Git).
