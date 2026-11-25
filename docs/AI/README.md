@@ -22,7 +22,7 @@ Base commit: `bc5f6ab` on `main`. Task 01 was done directly on `main` (setup exc
 | [02 — Developer tools, worktrees, and CI](implementation/02-developer-tools-and-ci.md) | Implemented (uncommitted; auxiliary tools not run) | 01 completed. |
 | [03 — Terminal engine and PTY sessions](implementation/03-terminal-engine.md) | Implemented locally. Headless Rust checks passed, full CI pending. | 02 completed. |
 | [04 — Plain graphical terminal](implementation/04-plain-terminal.md) | Implemented and verified on Wayland. Interactive IME check skipped. | 03 completed. |
-| [05 — Performance harness and baseline gate](implementation/05-performance-baseline.md) | Pending | 04 completed. |
+| [05 — Performance harness and baseline gate](implementation/05-performance-baseline.md) | Harness available. Hardware baseline unverified. | 04 completed. |
 | [06 — Static CRT rendering](implementation/06-static-crt.md) | Pending | 05 passed for the plain renderer. |
 | [07 — Text configuration and reload](implementation/07-text-configuration.md) | Pending | 06 completed. |
 | [08 — Native tabs and splits](implementation/08-tabs-and-splits.md) | Pending | 07 completed. |

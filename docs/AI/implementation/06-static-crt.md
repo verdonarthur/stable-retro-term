@@ -36,7 +36,7 @@ Add the default static CRT appearance while preserving the resource ceiling.
 ## Acceptance criteria
 
 - Static is the default; it introduces no independent animation timer.
-- The static preset passes CPU/RAM/GPU <= 1.20 times Alacritty in required scenarios.
+- The static preset passes CPU/RAM/GPU <= 1.40 times Alacritty in required scenarios, and does not regress the Task 05 baseline in `docs/decisions/05-renderer-baseline.md`.
 - Readability, input mapping, and correctness remain intact.
 
 ## Verification

@@ -2,6 +2,7 @@
 
 mod check;
 mod doctor;
+mod perf;
 mod process;
 mod report;
 mod run;
@@ -28,6 +29,8 @@ enum Command {
     Doctor(doctor::Args),
     /// Run the checks that CI runs.
     Check(check::Args),
+    /// Compare release terminals with a matched native Wayland workload.
+    Perf(perf::Args),
     /// Launch the plain Wayland terminal with development diagnostics.
     Run,
     /// Create, list, and remove task worktrees under `.worktrees/`.
@@ -69,6 +72,7 @@ fn main() -> ExitCode {
     let outcome = match cli.command {
         Command::Doctor(args) => doctor::run(&args),
         Command::Check(args) => check::run(&args),
+        Command::Perf(args) => perf::run(&args),
         Command::Run => run::run(),
         Command::Worktree(command) => worktree::run(&command),
     };
