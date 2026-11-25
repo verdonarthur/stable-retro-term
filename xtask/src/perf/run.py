@@ -84,6 +84,7 @@ def prepare(request, directory, report):
         "baseline_version": version,
         "baseline_build": os.environ.get("RETRO_PERF_ALACRITTY_BUILD"),
         "suite_sha256": sha(request["suite_path"]), "alacritty_config_sha256": sha(config),
+        "candidate_config_sha256": sha(request["candidate_config"]),
         "harness_sha256": {file.name: sha(file) for file in sorted(HERE.glob("*.py"))
                            if not file.name.startswith("test_")},
     }
@@ -190,7 +191,8 @@ class Fixture:
 
 
 def candidate_flags(request):
-    return ["--plain"] if request["candidate_plain"] else []
+    return ["--config", str(request["candidate_config"]),
+            *(["--plain"] if request["candidate_plain"] else [])]
 
 
 @contextmanager

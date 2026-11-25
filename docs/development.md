@@ -17,7 +17,7 @@ install command. It never installs anything.
 | `cargo xtask check -p retro-terminal` | Check one package (fmt, deny, and workflow lint are skipped) |
 | `cargo xtask check --step clippy` / `--skip deny` | Run only, or leave out, some steps |
 | `cargo xtask check --allow-missing` | Do not fail because a pinned tool is not installed |
-| `cargo xtask run` | Launch the plain Wayland terminal with development diagnostics |
+| `cargo xtask run` | Launch the Wayland terminal with development diagnostics and your [configuration](configuration.md) |
 | `cargo xtask worktree create <name> --base <rev>` | New worktree `.worktrees/<name>` on branch `<name>` |
 | `cargo xtask worktree list [--json]` | Show worktrees, branches, and dirty state |
 | `cargo xtask worktree remove <name> [--force]` | Remove a worktree; the branch is kept |
@@ -57,8 +57,8 @@ cargo xtask run
 cargo test --locked -p retro-renderer --test gpu_render -- --ignored --nocapture
 ```
 
-`run` launches a debug build with CRT effects disabled and development diagnostics
-enabled. It records the Wayland adapter and successful presentations in
+`run` launches a debug build with development diagnostics enabled. It reads your
+[configuration file](configuration.md); press Ctrl+Shift+R to reload it. It records the Wayland adapter and successful presentations in
 `target/xtask/logs/run.log`. The diagnostics contain no PTY or clipboard contents.
 The log is replaced on each launch.
 

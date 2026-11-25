@@ -5,6 +5,7 @@ use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 pub(crate) enum Action {
     Copy,
     Paste,
+    ReloadConfig,
     Bytes(Vec<u8>),
 }
 
@@ -32,6 +33,9 @@ pub(crate) fn key(
         }
         if character.eq_ignore_ascii_case("v") {
             return Some(Action::Paste);
+        }
+        if character.eq_ignore_ascii_case("r") {
+            return Some(Action::ReloadConfig);
         }
     }
     if modes.application_keypad
@@ -194,6 +198,21 @@ mod tests {
                 modes
             ),
             Some(Action::Paste)
+        );
+        let reload = PhysicalKey::Code(KeyCode::KeyR);
+        assert_eq!(
+            key(
+                Key::Character("R"),
+                None,
+                reload,
+                ctrl | ModifiersState::SHIFT,
+                modes
+            ),
+            Some(Action::ReloadConfig)
+        );
+        assert_eq!(
+            key(Key::Character("r"), None, reload, ctrl, modes),
+            Some(Action::Bytes(vec![0x12]))
         );
     }
 

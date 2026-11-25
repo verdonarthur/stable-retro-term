@@ -111,8 +111,11 @@ class Display(unittest.TestCase):
         self.assertIsNone(visible(frame, color, [7, 8, 32, 28]))
 
     def test_candidate_mode_flag(self):
-        self.assertEqual(candidate_flags({"candidate_plain": True}), ["--plain"])
-        self.assertEqual(candidate_flags({"candidate_plain": False}), [])
+        config = "/suite/fixtures/retro-term.toml"
+        self.assertEqual(candidate_flags({"candidate_plain": True, "candidate_config": config}),
+                         ["--config", config, "--plain"])
+        self.assertEqual(candidate_flags({"candidate_plain": False, "candidate_config": config}),
+                         ["--config", config])
 
     def test_crt_marker_cursor_and_typed_cell(self):
         for grid, viewport in (([10, 12, 96, 190], (101, 198)), ([6, 6, 48, 114], (53, 122))):

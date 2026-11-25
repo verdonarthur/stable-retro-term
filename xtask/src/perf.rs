@@ -48,6 +48,7 @@ struct Suite {
     version: u8,
     baseline_version: String,
     alacritty_config: PathBuf,
+    candidate_config: PathBuf,
     repetitions: u8,
     sample_ms: u64,
     idle_ms: u64,
@@ -114,6 +115,14 @@ pub(crate) fn run(args: &Args) -> Outcome {
         .unwrap_or(Path::new("."))
         .join(&suite.alacritty_config);
     let config = config.canonicalize().map_err(|e| io_failure(&config, &e))?;
+    let candidate_config = args
+        .suite
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join(&suite.candidate_config);
+    let candidate_config = candidate_config
+        .canonicalize()
+        .map_err(|e| io_failure(&candidate_config, &e))?;
     let source = output("git", &["rev-parse", "HEAD"], &root)?;
     let dirty = !output("git", &["status", "--porcelain"], &root)?.is_empty();
     let candidate = binary(&args.candidate);
@@ -151,7 +160,7 @@ pub(crate) fn run(args: &Args) -> Outcome {
         .map_err(|e| io_failure(&args.suite, &e))?;
     let request = json!({
         "suite": suite, "suite_path": suite_path, "config": config,
-        "candidate_plain": args.candidate_plain,
+        "candidate_plain": args.candidate_plain, "candidate_config": candidate_config,
         "candidate": candidate, "baseline": baseline, "preflight": args.preflight, "scenario": args.scenario,
     });
     let driver = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/perf/run.py");

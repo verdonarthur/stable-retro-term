@@ -17,6 +17,7 @@ cd .worktrees/my-task && cargo xtask check       # the same checks as CI
 - [Contributing](CONTRIBUTING.md)
 - [Architecture](docs/architecture.md)
 - [Development](docs/development.md)
+- [Configuration](docs/configuration.md)
 
 ## Thanks
 

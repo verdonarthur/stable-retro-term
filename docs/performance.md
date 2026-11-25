@@ -42,6 +42,9 @@ cargo xtask perf --candidate target/release/retro-term --baseline alacritty --su
 cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/plain.json --candidate-plain
 ```
 
+The candidate runs with `--config benchmarks/fixtures/retro-term.toml` (the suite key
+`candidate_config`), so a user configuration file does not change the result.
+
 Preflight checks the baseline version and records binary, source, suite, and font
 identity. It checks that the desktop portal advertises the keyboard, pointer,
 and output capture capabilities. The measured run requests those permissions

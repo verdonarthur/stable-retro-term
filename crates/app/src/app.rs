@@ -1,10 +1,11 @@
 use std::error::Error;
 use std::io;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
-use retro_renderer::{Frame, SurfaceRenderer};
+use retro_renderer::{FontError, Frame, RenderMode, SurfaceRenderer};
 use retro_terminal::{
     CursorShape, GridSize, Input, Position, Program, Session, SessionError, SessionId,
     SessionOptions, TitleChange,
@@ -16,6 +17,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
+use crate::config::{self, Changes, Config, ConfigError, Overrides, Source};
 use crate::input::{self, Action, Composition};
 use crate::platform;
 use crate::scene;
@@ -39,6 +41,20 @@ pub fn run_with_program(development: bool, program: Option<Program>) -> AppResul
 }
 
 pub fn run_with_mode(development: bool, plain: bool, program: Option<Program>) -> AppResult<()> {
+    let overrides = Overrides {
+        plain,
+        program: program.map(|program| (program.executable, program.arguments)),
+    };
+    run_with_config(
+        development,
+        Source::Default(platform::config_path()),
+        overrides,
+    )
+}
+
+/// An invalid file starts the defaults and shows the error in the window.
+/// An explicit file that cannot be read is an error.
+pub fn run_with_config(development: bool, source: Source, overrides: Overrides) -> AppResult<()> {
     use winit::platform::wayland::EventLoopBuilderExtWayland;
     let events = EventLoop::<Event>::with_user_event()
         .with_wayland()
@@ -48,8 +64,8 @@ pub fn run_with_mode(development: bool, plain: bool, program: Option<Program>) -
         state: None,
         error: None,
         development,
-        plain,
-        program,
+        source,
+        overrides,
     };
     events.run_app(&mut app)?;
     app.error.map_or(Ok(()), Err)
@@ -60,8 +76,8 @@ struct App {
     state: Option<State>,
     error: Option<Box<dyn Error>>,
     development: bool,
-    plain: bool,
-    program: Option<Program>,
+    source: Source,
+    overrides: Overrides,
 }
 
 impl App {
@@ -92,7 +108,10 @@ struct State {
     scroll_fraction: f64,
     gpu_recovered: bool,
     development: bool,
-    plain: bool,
+    config: Config,
+    source: Source,
+    overrides: Overrides,
+    banner: String,
     previous_ime_cursor: Option<(GridSize, Position, [u32; 2])>,
 }
 
@@ -101,9 +120,16 @@ impl State {
         events: &ActiveEventLoop,
         proxy: EventLoopProxy<Event>,
         development: bool,
-        plain: bool,
-        program: Option<Program>,
+        source: Source,
+        overrides: Overrides,
     ) -> AppResult<Self> {
+        let (mut config, mut startup_error) = match config::load(&source, &overrides) {
+            Ok(config) => (config, None),
+            Err(error @ ConfigError::Io(_)) if matches!(source, Source::Explicit(_)) => {
+                return Err(config_message(&source, &error).into());
+            }
+            Err(error) => (fallback(&overrides)?, Some(error)),
+        };
         let window = Arc::new(
             events.create_window(
                 Window::default_attributes()
@@ -113,8 +139,19 @@ impl State {
             )?,
         );
         window.set_ime_allowed(true);
-        let mut renderer = create_renderer(events, &window, development, plain)?;
-        let (font_size, line_height) = scene::font_metrics(window.scale_factor());
+        let mut renderer = match create_renderer(events, &window, development, &config) {
+            Err(error) if error.is::<FontError>() => {
+                startup_error = Some(font_error(&config));
+                config = fallback(&overrides)?;
+                create_renderer(events, &window, development, &config)?
+            }
+            result => result?,
+        };
+        let (font_size, line_height) = scene::font_metrics(
+            window.scale_factor(),
+            config.font.size,
+            config.font.line_height,
+        );
         let cell_width = renderer.cell_width(font_size, line_height);
         let fallback = INITIAL_SIZE.to_physical::<u32>(window.scale_factor());
         let grid = scene::grid_size(window.inner_size().into(), cell_width, line_height)
@@ -124,9 +161,11 @@ impl State {
         let session = Session::spawn(
             SessionOptions {
                 size: grid,
-                program,
-                working_directory: None,
-                scrollback_lines: 10_000,
+                program: program(&config),
+                working_directory: Some(&config.shell.working_directory)
+                    .filter(|directory| !directory.is_empty())
+                    .map(PathBuf::from),
+                scrollback_lines: config.terminal.scrollback_lines,
             },
             move |id| {
                 let _ = wake.send_event(Event::Terminal(id));
@@ -149,15 +188,25 @@ impl State {
             scroll_fraction: 0.0,
             gpu_recovered: false,
             development,
-            plain,
+            config,
+            source,
+            overrides,
+            banner: String::new(),
             previous_ime_cursor: None,
         };
+        if let Some(error) = startup_error {
+            state.show(config_message(&state.source, &error));
+        }
         state.resize(state.window.inner_size())?;
         Ok(state)
     }
 
     fn resize(&mut self, size: PhysicalSize<u32>) -> AppResult<()> {
-        let (font_size, line_height) = scene::font_metrics(self.window.scale_factor());
+        let (font_size, line_height) = scene::font_metrics(
+            self.window.scale_factor(),
+            self.config.font.size,
+            self.config.font.line_height,
+        );
         let cell_width = if font_size == self.font_size && line_height == self.grid.cell_height {
             self.grid.cell_width
         } else {
@@ -182,6 +231,45 @@ impl State {
             }
         }
         self.font_size = font_size;
+        Ok(())
+    }
+
+    fn show(&mut self, message: String) {
+        eprintln!("retro-term: {message}");
+        self.banner = message;
+        self.scheduler.invalidate();
+    }
+
+    /// Applies a valid file. An invalid file keeps the running state and shows the error.
+    fn reload(&mut self) -> AppResult<()> {
+        let candidate = config::load(&self.source, &self.overrides).and_then(|candidate| {
+            if Changes::between(&self.config, &candidate).renderer {
+                self.renderer
+                    .reconfigure(render_mode(&candidate), font_family(&candidate))
+                    .map_err(|_| font_error(&candidate))?;
+            }
+            Ok(candidate)
+        });
+        let (candidate, error) = config::reload(&self.config, candidate);
+        if let Some(error) = error {
+            self.show(config_message(&self.source, &error));
+            return Ok(());
+        }
+        let changes = Changes::between(&self.config, &candidate);
+        self.config = candidate;
+        if changes.layout {
+            self.font_size = 0;
+            self.previous_ime_cursor = None;
+            self.selection_start = None;
+            self.resize(self.window.inner_size())?;
+        }
+        self.banner.clear();
+        self.scheduler.invalidate();
+        if changes.new_sessions {
+            self.show(
+                "configuration reloaded; shell and scrollback settings apply to new shells".into(),
+            );
+        }
         Ok(())
     }
 
@@ -219,6 +307,7 @@ impl State {
                 self.paste_pending = true;
             }
             Action::Paste => {}
+            Action::ReloadConfig => self.reload()?,
         }
         Ok(())
     }
@@ -297,6 +386,7 @@ impl State {
             self.font_size,
             visible,
             &self.composition.preedit,
+            &self.banner,
         );
         match self
             .renderer
@@ -316,7 +406,7 @@ impl State {
             }
             Frame::RecreateDevice if !self.gpu_recovered => {
                 self.renderer =
-                    create_renderer(events, &self.window, self.development, self.plain)?;
+                    create_renderer(events, &self.window, self.development, &self.config)?;
                 self.gpu_recovered = true;
                 self.resize(self.window.inner_size())?;
                 self.scheduler.retry(now);
@@ -349,6 +439,10 @@ impl State {
                 is_synthetic: false,
                 ..
             } if event.state == ElementState::Pressed && self.composition.preedit.is_empty() => {
+                if !self.banner.is_empty() {
+                    self.banner.clear();
+                    self.scheduler.invalidate();
+                }
                 if let Some(action) = input::key(
                     event.logical_key.as_ref(),
                     event.text.as_deref(),
@@ -412,16 +506,13 @@ fn create_renderer(
     events: &ActiveEventLoop,
     window: &Arc<Window>,
     development: bool,
-    plain: bool,
+    config: &Config,
 ) -> AppResult<SurfaceRenderer> {
-    let renderer = pollster::block_on(SurfaceRenderer::with_mode(
+    let renderer = pollster::block_on(SurfaceRenderer::with_family(
         platform::graphics(events),
         window.clone(),
-        if plain {
-            retro_renderer::RenderMode::Plain
-        } else {
-            retro_renderer::RenderMode::StaticCrt
-        },
+        render_mode(config),
+        font_family(config),
     ))?;
     if development {
         let adapter = renderer.adapter_info();
@@ -433,6 +524,45 @@ fn create_renderer(
     Ok(renderer)
 }
 
+fn render_mode(config: &Config) -> RenderMode {
+    if config.effects.crt {
+        RenderMode::StaticCrt
+    } else {
+        RenderMode::Plain
+    }
+}
+
+fn font_family(config: &Config) -> Option<&str> {
+    Some(config.font.family.as_str()).filter(|family| !family.is_empty())
+}
+
+fn font_error(config: &Config) -> ConfigError {
+    ConfigError::Font {
+        family: config.font.family.clone(),
+    }
+}
+
+fn program(config: &Config) -> Option<Program> {
+    Some(&config.shell)
+        .filter(|shell| !shell.program.is_empty())
+        .map(|shell| Program {
+            executable: shell.program.clone(),
+            arguments: shell.args.clone(),
+        })
+}
+
+/// The defaults with the command-line overrides, used when the file is invalid at startup.
+fn fallback(overrides: &Overrides) -> AppResult<Config> {
+    Ok(Config::resolve(config::Layer::default(), overrides)?)
+}
+
+fn config_message(source: &Source, error: &ConfigError) -> String {
+    match source.path() {
+        Some(path) => format!("config {}: {error}", path.display()),
+        None => format!("config: {error}"),
+    }
+}
+
 impl ApplicationHandler<Event> for App {
     fn resumed(&mut self, events: &ActiveEventLoop) {
         let result = match &mut self.state {
@@ -441,8 +571,8 @@ impl ApplicationHandler<Event> for App {
                 events,
                 self.proxy.clone(),
                 self.development,
-                self.plain,
-                self.program.take(),
+                self.source.clone(),
+                self.overrides.clone(),
             )
             .map(|state| self.state = Some(state)),
         };
