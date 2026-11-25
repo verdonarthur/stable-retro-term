@@ -1,8 +1,8 @@
 # Retro terminal plans
 
-In-progress plans live in `doc/AI/<category>/<plan>.md`.
+In-progress plans live in `docs/AI/<category>/<plan>.md`.
 The previous provider-specific plan location has been retired.
-These plans remain gitignored, as previously requested; this move does not authorize commits.
+These plans are tracked by Git, so every worktree gets them. Tracking does not authorize commits.
 Durable architecture/developer documentation will be kept in tracked `docs/` when implemented.
 
 ## Start here
@@ -12,14 +12,13 @@ Start with [01 — Repository setup](implementation/01-repository-setup.md).
 Each subtask includes context, prerequisites, files, steps, acceptance criteria, verification, and handoff.
 The individual subtasks own execution steps; the architecture is the common design reference.
 
-Git is initialized on `main`, but has no commits. Before implementation in a worktree,
-obtain an existing base or explicit initial-commit authorization. No initial commit was made by this planning task.
+Base commit: `bc5f6ab` on `main`. Task 01 was done directly on `main` (setup exception).
 
 ## Execution order
 
 | Plan | Status | Prerequisites |
 | --- | --- | --- |
-| [01 — Repository setup](implementation/01-repository-setup.md) | Pending | None. Git is initialized on main, but currently has no commits. |
+| [01 — Repository setup](implementation/01-repository-setup.md) | Done (uncommitted) | None. |
 | [02 — Developer tools, worktrees, and CI](implementation/02-developer-tools-and-ci.md) | Pending | 01 completed. |
 | [03 — Terminal engine and PTY sessions](implementation/03-terminal-engine.md) | Pending | 02 completed. |
 | [04 — Plain graphical terminal](implementation/04-plain-terminal.md) | Pending | 03 completed. |
@@ -41,8 +40,7 @@ Task 10 may release only features/presets with valid passing evidence.
 1. Read the selected subtask, the shared architecture, and applicable repository instructions.
 2. Check dependency results and current files; plans describe future files, not existing tooling.
 3. Create a worktree from the agreed base. Until the helper exists in task 02, use Git directly.
-4. Transfer the selected plan plus this index and referenced architecture into matching `doc/AI/` paths.
-   Git does not carry ignored plans into worktrees. Preserve newer local notes.
+4. Plans are tracked, so the worktree already has them. Commit plan updates with the task's work.
 5. Implement only the requested scope; run project checks and record evidence in the subtask.
 6. Update the task status and handoff. Keep unfinished or infrastructure-blocked work explicit.
 

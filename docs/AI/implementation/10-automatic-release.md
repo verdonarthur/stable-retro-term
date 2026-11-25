@@ -11,7 +11,7 @@ CPU, RAM, and GPU must each stay within 1.20 times Alacritty for every shipped p
 Static CRT is default; animation is opt-in but gets no budget exception.
 Use a task worktree and the agreed base. Do not commit, push, or open a PR unless asked.
 Use project tooling only. Report skipped/unavailable checks; never invent a passing result.
-Record progress and handoff here under doc/AI/implementation/. This plan overrides the old plan-directory convention.
+Record progress and handoff here under docs/AI/implementation/. This plan overrides the old plan-directory convention.
 
 ## Goal
 
@@ -50,8 +50,8 @@ Commands below are to run after this task and its dependencies supply the toolin
 Do not claim that planned commands already exist.
 
 ```sh
-rtk cargo xtask check
-rtk cargo xtask package --check
+cargo xtask check
+cargo xtask package --check
 ```
 
 Run the perf command from 05 on the packaged binary path emitted by package --check; record that exact path/checksum. Local package checks never publish. No bot/runner creation, push, or release is authorized merely by planning.

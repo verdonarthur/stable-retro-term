@@ -37,23 +37,20 @@ Use GitHub Actions for CI and publish releases automatically after a generated r
 ## Current workspace and evidence
 
 The project directory is `/home/arthur/Documents/perso/retro-term`.
-Inspection found no source files, Cargo manifest, README, test suite, or build commands.
-Git is now initialized on `main`, with no commits. The remaining bootstrap blocker is the absence of a base commit.
+Task 01 created the Cargo workspace (three product crates plus `xtask`), root docs, and checks. There is no terminal or test suite yet.
+Base commit: `bc5f6ab` on `main`.
 There is no existing application behavior or branch diff to preserve.
-Plans now live under `doc/AI/<category>/` and remain ignored through `doc/AI/.gitignore`.
-See `../README.md` for the task order and status. No implementation or initial commit is authorized by reorganizing these plans.
+Plans live under `docs/AI/<category>/` and are tracked in Git.
+See `../README.md` for the task order and status.
 
-Read `/home/arthur/.codex/RTK.md` and any applicable `AGENTS.md` before implementation.
-Prefix shell commands with `rtk`; use `rtk proxy` when a raw command is required.
+Read the root `AGENTS.md` before implementation.
 
 ## Feasibility and unresolved engineering risks
 
 Planning confidence: 75/100, a subjective engineering estimate rather than a measured probability.
 Engine reuse, text configuration, and pane layout are feasible. The strict resource budget remains unproven.
 
-- B1 — Repository setup: Git is initialized on `main`, but no base commit exists.
-  Recheck before implementation. Obtain an existing base or explicit authorization for an initial commit before new branch work.
-  Do not create an initial commit to work around the user's no-commit instruction.
+- B1 — Repository setup: resolved. Base commit `bc5f6ab` exists; task 01 is done.
 - B2 — Relative idle budget: when Alacritty's GPU work is zero, 1.20 times zero is still zero.
   Independent continuous animation cannot meet that case. Do not silently add an absolute allowance.
   Effects must be optimized, scheduled only when permitted by measurements, or excluded if they fail.
@@ -68,7 +65,6 @@ Engine reuse, text configuration, and pane layout are feasible. The strict resou
   Provision this before enabling publication; do not substitute a software-rendered hosted-runner result.
   GitHub App credentials for the release bot and repository rules also need setup when the workflows are implemented.
 
-Evidence for B1 comes from workspace inspection; there are no application file/line locations to cite yet.
 B2 follows from the accepted ratio. B3–B5 must be resolved through the prototype and benchmark suite below.
 
 ## Recommended dependencies
@@ -176,11 +172,10 @@ retro-term/
     ai-workflow.md                   # Task brief and handoff contract
     releasing.md                     # Bot setup, release gates, recovery
     decisions/                      # Durable accepted architecture decisions
-  doc/AI/
+  docs/AI/
     README.md                        # Plan index and execution order
     architecture/                    # Shared architecture reference
     implementation/                  # Ordered subtask plans
-    .gitignore                       # In-progress plans stay local
   .worktrees/                        # Ignored task checkouts
 ```
 
@@ -193,7 +188,7 @@ There remain three product crates. `xtask` is a fourth workspace package for dev
 ### One command interface
 
 Use a small Rust `xtask` package with a Cargo alias. Keep it independent of the GPU/application crates so it starts quickly.
-The underlying commands are ordinary Cargo commands; RTK is the user's local wrapper, not a hidden CI prerequisite.
+The underlying commands are ordinary Cargo commands.
 Use the same task implementations locally and in GitHub Actions. YAML should orchestrate jobs rather than duplicate checks.
 
 Proposed task contract:
@@ -233,7 +228,7 @@ Before removal, check tracked changes, untracked files, and task notes; refuse d
 Do not delete branches automatically. Record any retained worktree and why it remains.
 
 Ignored plans do not appear in a new Git worktree automatically.
-The explicit `--plan` option transfers the selected plan and its referenced architecture/index documents into matching `doc/AI/` paths in the worktree and records the source/base SHA. Refuse to overwrite newer worktree notes.
+The explicit `--plan` option transfers the selected plan and its referenced architecture/index documents into matching `docs/AI/` paths in the worktree and records the source/base SHA. Refuse to overwrite newer worktree notes.
 Do not copy arbitrary secrets, local application settings, or other ignored directories.
 Keep durable decisions in tracked `docs/decisions/` and architecture documentation so a fresh clone has essential context.
 The main README must explain the initial clone/doctor/worktree/check sequence and the prerequisite of a usable Git base.
@@ -461,21 +456,21 @@ These are commands the implementation must provide. They are not runnable agains
 Run them from the implementation worktree, using the project's own Cargo tests, checks, and maintained performance CLI.
 
 ```sh
-rtk cargo xtask doctor
-rtk cargo xtask check
-rtk cargo fmt --all -- --check
-rtk cargo clippy --locked --workspace --all-targets -- -D warnings
-rtk cargo test --locked --workspace --all-targets
-rtk cargo test --locked --workspace --doc
-rtk cargo build --locked --release -p retro-app --bin retro-term
-rtk cargo xtask run
-rtk cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/report.json
-rtk cargo xtask package --check
+cargo xtask doctor
+cargo xtask check
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace --all-targets
+cargo test --locked --workspace --doc
+cargo build --locked --release -p retro-app --bin retro-term
+cargo xtask run
+cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/report.json
+cargo xtask package --check
 ```
 
 The `xtask` commands are the proposed automation contract; implement them before using them as verification.
 The raw Cargo checks document the core operations behind `xtask check`; do not run both sets redundantly.
-`xtask package --check` is a local check and never publishes. GitHub CI calls ordinary `cargo xtask` without requiring RTK.
+`xtask package --check` is a local check and never publishes. GitHub CI calls the same `cargo xtask` commands.
 The performance suite needs a desktop session and suitable GPU counters. Do not report it as passed on a headless run that skipped it.
 Run appropriate checks once after each meaningful change; rerun broader checks only for new changes or unresolved failures.
 No extra servers, ad-hoc verification scripts, or fabricated benchmark numbers.

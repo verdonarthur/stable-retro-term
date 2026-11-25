@@ -1,0 +1,7 @@
+/target/
+/.worktrees/
+/.env
+*.log
+
+# Tracked despite global ignore rules
+!/AGENTS.md
