@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::io;
 use std::path::PathBuf;
@@ -19,12 +20,16 @@ use winit::window::{Window, WindowId};
 
 use crate::config::{self, Changes, Config, ConfigError, Overrides, Source};
 use crate::input::{self, Action, Composition};
+use crate::layout::{Limits, PaneId, Rect};
 use crate::platform;
 use crate::scene;
 use crate::scheduler::Scheduler;
+use crate::tabs::Tabs;
+use crate::ui;
 
 const TITLE: &str = "Retro Terminal";
 const INITIAL_SIZE: LogicalSize<u32> = LogicalSize::new(800, 500);
+const MIN_PANE_CELLS: [u32; 2] = [10, 3];
 type AppResult<T> = Result<T, Box<dyn Error>>;
 
 enum Event {
@@ -85,27 +90,38 @@ impl App {
         let close_error = self
             .state
             .take()
-            .and_then(|mut state| state.session.close().err());
+            .and_then(|mut state| state.close_all().err());
         self.error = error.or_else(|| close_error.map(Into::into));
         events.exit();
     }
 }
 
+struct Pane {
+    session: Session,
+    grid: GridSize,
+    /// `None` while the pane is too small to hold a grid; it is not drawn then.
+    origin: Option<[u32; 2]>,
+    title: Option<String>,
+    scroll_fraction: f64,
+}
+
 struct State {
     renderer: SurfaceRenderer,
     window: Arc<Window>,
-    session: Session,
+    tabs: Tabs,
+    panes: HashMap<PaneId, Pane>,
+    sessions: HashMap<SessionId, PaneId>,
     proxy: EventLoopProxy<Event>,
     scheduler: Scheduler,
     modifiers: ModifiersState,
     pointer: Option<PhysicalPosition<f64>>,
-    selection_start: Option<Position>,
+    selection_start: Option<(PaneId, Position)>,
     composition: Composition,
-    grid: GridSize,
+    /// Cell width and line height in physical pixels.
+    cell: (u16, u16),
     font_size: u16,
     occluded: bool,
     paste_pending: bool,
-    scroll_fraction: f64,
     gpu_recovered: bool,
     development: bool,
     config: Config,
@@ -121,8 +137,16 @@ impl State {
         proxy: EventLoopProxy<Event>,
         development: bool,
         source: Source,
-        overrides: Overrides,
+        mut overrides: Overrides,
     ) -> AppResult<Self> {
+        // Only the first pane runs the program after `--`; new panes use the configured shell.
+        let first_program = overrides
+            .program
+            .take()
+            .map(|(executable, arguments)| Program {
+                executable,
+                arguments,
+            });
         let (mut config, mut startup_error) = match config::load(&source, &overrides) {
             Ok(config) => (config, None),
             Err(error @ ConfigError::Io(_)) if matches!(source, Source::Explicit(_)) => {
@@ -157,35 +181,25 @@ impl State {
         let grid = scene::grid_size(window.inner_size().into(), cell_width, line_height)
             .or_else(|| scene::grid_size(fallback.into(), cell_width, line_height))
             .ok_or_else(|| io::Error::other("cannot calculate the initial terminal grid"))?;
-        let wake = proxy.clone();
-        let session = Session::spawn(
-            SessionOptions {
-                size: grid,
-                program: program(&config),
-                working_directory: Some(&config.shell.working_directory)
-                    .filter(|directory| !directory.is_empty())
-                    .map(PathBuf::from),
-                scrollback_lines: config.terminal.scrollback_lines,
-            },
-            move |id| {
-                let _ = wake.send_event(Event::Terminal(id));
-            },
-        )?;
+        let first_program = first_program.or_else(|| program(&config));
+        let session = spawn(&proxy, &config, grid, first_program)?;
+        let (tabs, pane) = Tabs::new();
         let mut state = Self {
             renderer,
             window,
-            session,
+            tabs,
+            panes: HashMap::new(),
+            sessions: HashMap::new(),
             proxy,
             scheduler: Scheduler::default(),
             modifiers: ModifiersState::empty(),
             pointer: None,
             selection_start: None,
             composition: Composition::default(),
-            grid,
+            cell: (cell_width, line_height),
             font_size,
             occluded: false,
             paste_pending: false,
-            scroll_fraction: 0.0,
             gpu_recovered: false,
             development,
             config,
@@ -194,6 +208,7 @@ impl State {
             banner: String::new(),
             previous_ime_cursor: None,
         };
+        state.insert(pane, session, grid);
         if let Some(error) = startup_error {
             state.show(config_message(&state.source, &error));
         }
@@ -207,31 +222,177 @@ impl State {
             self.config.font.size,
             self.config.font.line_height,
         );
-        let cell_width = if font_size == self.font_size && line_height == self.grid.cell_height {
-            self.grid.cell_width
+        let cell_width = if font_size == self.font_size && line_height == self.cell.1 {
+            self.cell.0
         } else {
             self.renderer.cell_width(font_size, line_height)
         };
         let grid = scene::grid_size(size.into(), cell_width, line_height);
         self.scheduler
             .set_presentable(grid.is_some() && !self.occluded);
-        let Some(grid) = grid else {
+        if grid.is_none() {
             self.renderer.resize([0, 0])?;
             return Ok(());
-        };
+        }
         self.renderer.resize(size.into())?;
-        if grid != self.grid {
-            match self.session.resize(grid) {
-                Ok(()) => {
-                    self.grid = grid;
-                    self.selection_start = None;
+        self.cell = (cell_width, line_height);
+        self.font_size = font_size;
+        self.layout_panes()
+    }
+
+    /// Gives every pane in every tab, hidden ones too, the grid of its layout rect.
+    fn layout_panes(&mut self) -> AppResult<()> {
+        let (area, limits) = (self.area(), self.limits());
+        let (cell_width, line_height) = self.cell;
+        let mut changed = false;
+        for tab in self.tabs.iter() {
+            for (id, rect) in tab.layout.rects(area, limits) {
+                let Some(pane) = self.panes.get_mut(&id) else {
+                    continue;
+                };
+                let grid = scene::grid_size([rect.width, rect.height], cell_width, line_height);
+                let origin = grid.map(|_| [rect.x, rect.y]);
+                changed |= origin != pane.origin;
+                pane.origin = origin;
+                let Some(grid) = grid.filter(|grid| *grid != pane.grid) else {
+                    continue;
+                };
+                match pane.session.resize(grid) {
+                    Ok(()) => {
+                        changed = true;
+                        pane.grid = grid;
+                        if self.selection_start.is_some_and(|(pane, _)| pane == id) {
+                            self.selection_start = None;
+                        }
+                    }
+                    Err(SessionError::Closed) => {}
+                    Err(error) => return Err(error.into()),
                 }
-                Err(SessionError::Closed) => return Ok(()),
-                Err(error) => return Err(error.into()),
             }
         }
-        self.font_size = font_size;
+        if changed {
+            self.scheduler.invalidate();
+        }
         Ok(())
+    }
+
+    /// The window without the tab bar. The bar shows only with two or more tabs.
+    fn area(&self) -> Rect {
+        let [width, height] = self.renderer.size();
+        let bar = self.tab_bar_height();
+        Rect {
+            x: 0,
+            y: bar,
+            width,
+            height: height.saturating_sub(bar),
+        }
+    }
+
+    fn tab_bar_height(&self) -> u32 {
+        if self.tabs.len() >= 2 {
+            u32::from(self.cell.1)
+        } else {
+            0
+        }
+    }
+
+    fn limits(&self) -> Limits {
+        Limits {
+            cell: [u32::from(self.cell.0), u32::from(self.cell.1)],
+            divider: (2.0 * self.window.scale_factor()).round().max(1.0) as u32,
+            min_cells: MIN_PANE_CELLS,
+        }
+    }
+
+    fn insert(&mut self, id: PaneId, session: Session, grid: GridSize) {
+        self.sessions.insert(session.id(), id);
+        self.panes.insert(
+            id,
+            Pane {
+                session,
+                grid,
+                origin: None,
+                title: None,
+                scroll_fraction: 0.0,
+            },
+        );
+    }
+
+    /// Starts the shell of a pane that the tabs already hold; on failure removes it again.
+    fn open_pane(&mut self, id: PaneId) -> AppResult<()> {
+        let (cell_width, line_height) = self.cell;
+        let grid = self.tabs.tab_of(id).and_then(|index| {
+            let (area, limits) = (self.area(), self.limits());
+            let tab = self.tabs.iter().nth(index)?;
+            let (_, rect) = tab
+                .layout
+                .rects(area, limits)
+                .into_iter()
+                .find(|(pane, _)| *pane == id)?;
+            scene::grid_size([rect.width, rect.height], cell_width, line_height)
+        });
+        let session = match grid {
+            Some(grid) => spawn(&self.proxy, &self.config, grid, program(&self.config))
+                .map(|session| (session, grid))
+                .map_err(|error| error.to_string()),
+            None => Err("the window is too small".into()),
+        };
+        match session {
+            Ok((session, grid)) => self.insert(id, session, grid),
+            Err(message) => {
+                self.tabs.close(id);
+                self.show(format!("cannot open a pane: {message}"));
+            }
+        }
+        self.layout_panes()?;
+        self.activate();
+        Ok(())
+    }
+
+    /// Closes the pane's shell and collapses its layout. Returns true when no tab is left.
+    fn close_pane(&mut self, id: PaneId) -> AppResult<bool> {
+        let visible = self.tabs.is_visible(id);
+        let closed = match self.panes.remove(&id) {
+            Some(mut pane) => {
+                self.sessions.remove(&pane.session.id());
+                pane.session.close()
+            }
+            None => Ok(()),
+        };
+        if self.tabs.close(id) {
+            return closed.map(|()| true).map_err(Into::into);
+        }
+        self.layout_panes()?;
+        if visible {
+            self.activate();
+        }
+        closed.map(|()| false).map_err(Into::into)
+    }
+
+    fn close_all(&mut self) -> Result<(), SessionError> {
+        self.sessions.clear();
+        self.panes
+            .drain()
+            .map(|(_, mut pane)| pane.session.close())
+            .fold(Ok(()), Result::and)
+    }
+
+    /// Resets per-view input state after the focused pane or active tab changed.
+    fn activate(&mut self) {
+        self.selection_start = None;
+        self.composition.preedit.clear();
+        self.previous_ime_cursor = None;
+        let title = self
+            .panes
+            .get(&self.tabs.focused())
+            .and_then(|pane| pane.title.as_deref())
+            .unwrap_or(TITLE);
+        self.window.set_title(title);
+        self.scheduler.invalidate();
+    }
+
+    fn focused(&mut self) -> Option<&mut Pane> {
+        self.panes.get_mut(&self.tabs.focused())
     }
 
     fn show(&mut self, message: String) {
@@ -267,16 +428,20 @@ impl State {
         self.scheduler.invalidate();
         if changes.new_sessions {
             self.show(
-                "configuration reloaded; shell and scrollback settings apply to new shells".into(),
+                "configuration reloaded; shell and scrollback settings apply to new panes and tabs"
+                    .into(),
             );
         }
         Ok(())
     }
 
     fn send_input(&mut self, input: Input<'_>) -> AppResult<()> {
-        match self.session.input(input) {
+        let Some(pane) = self.focused() else {
+            return Ok(());
+        };
+        match pane.session.input(input) {
             Ok(()) => {
-                if self.session.scroll_to_bottom() {
+                if pane.session.scroll_to_bottom() {
                     self.scheduler.invalidate();
                 }
                 Ok(())
@@ -286,11 +451,13 @@ impl State {
         }
     }
 
-    fn action(&mut self, action: Action) -> AppResult<()> {
+    /// Returns true when the action closed the last pane.
+    fn action(&mut self, action: Action) -> AppResult<bool> {
+        let (area, limits) = (self.area(), self.limits());
         match action {
             Action::Bytes(bytes) => self.send_input(Input::Bytes(&bytes))?,
             Action::Copy => {
-                if let Some(text) = self.session.selected_text()
+                if let Some(text) = self.focused().and_then(|pane| pane.session.selected_text())
                     && let Err(error) = platform::copy_text(text)
                 {
                     eprintln!("clipboard copy: {error}");
@@ -308,38 +475,139 @@ impl State {
             }
             Action::Paste => {}
             Action::ReloadConfig => self.reload()?,
+            Action::NewTab => {
+                let previous = self.tabs.active_index();
+                let pane = self.tabs.open();
+                self.open_pane(pane)?;
+                if !self.panes.contains_key(&pane) {
+                    self.tabs.select(previous);
+                    self.activate();
+                }
+            }
+            Action::Split(axis) => {
+                if let Some(pane) = self.tabs.split(axis, area, limits) {
+                    self.open_pane(pane)?;
+                }
+            }
+            Action::ClosePane => return self.close_pane(self.tabs.focused()),
+            Action::NextTab => {
+                self.tabs.next();
+                self.activate();
+            }
+            Action::PreviousTab => {
+                self.tabs.previous();
+                self.activate();
+            }
+            Action::Focus(direction) => {
+                if self
+                    .tabs
+                    .active_mut()
+                    .layout
+                    .focus_toward(direction, area, limits)
+                {
+                    self.activate();
+                }
+            }
+            Action::Resize(direction) => {
+                if self
+                    .tabs
+                    .active_mut()
+                    .layout
+                    .resize(direction, area, limits)
+                {
+                    self.layout_panes()?;
+                }
+            }
         }
-        Ok(())
+        Ok(false)
     }
 
-    fn pointer_cell(&self, clamp: bool) -> Option<Position> {
+    /// The pointer in window pixels before the CRT warp.
+    fn pointer_source(&self) -> Option<[f64; 2]> {
         let point = self.pointer?;
+        Some(
+            self.renderer
+                .mode()
+                .source_point([point.x, point.y], self.renderer.size()),
+        )
+    }
+
+    fn pane_under_pointer(&self) -> Option<PaneId> {
+        let point = self.pointer_source()?;
+        self.tabs
+            .active()
+            .layout
+            .pane_at(point, self.area(), self.limits())
+    }
+
+    fn pointer_cell(&self, id: PaneId, clamp: bool) -> Option<Position> {
+        let point = self.pointer?;
+        let pane = self.panes.get(&id)?;
         scene::pointer_cell(
             [point.x, point.y],
             self.renderer.size(),
             self.renderer.mode(),
-            self.grid,
+            pane.origin?,
+            pane.grid,
             clamp,
         )
     }
 
+    fn press(&mut self) {
+        self.selection_start = None;
+        let Some([x, y]) = self.pointer_source() else {
+            return;
+        };
+        if y < f64::from(self.tab_bar_height()) {
+            let [width, _] = self.renderer.size();
+            if let Some(index) = ui::tab_at(x, width, self.tabs.len(), u32::from(self.cell.0))
+                && index != self.tabs.active_index()
+            {
+                self.tabs.select(index);
+                self.activate();
+            }
+            return;
+        }
+        let Some(id) = self.pane_under_pointer() else {
+            return;
+        };
+        if id != self.tabs.focused() {
+            self.tabs.active_mut().layout.set_focus(id);
+            self.activate();
+        }
+        self.selection_start = self.pointer_cell(id, false).map(|start| (id, start));
+        if let Some(pane) = self.panes.get_mut(&id) {
+            pane.session.clear_selection();
+        }
+        self.scheduler.invalidate();
+    }
+
     fn drag(&mut self) {
-        if let (Some(start), Some(end)) = (self.selection_start, self.pointer_cell(true)) {
-            self.session.select(start, end);
+        if let Some((id, start)) = self.selection_start
+            && let Some(end) = self.pointer_cell(id, true)
+            && let Some(pane) = self.panes.get_mut(&id)
+        {
+            pane.session.select(start, end);
             self.scheduler.invalidate();
         }
     }
 
     fn scroll(&mut self, delta: MouseScrollDelta) {
+        let Some(pane) = self
+            .pane_under_pointer()
+            .and_then(|id| self.panes.get_mut(&id))
+        else {
+            return;
+        };
         let lines = match delta {
             MouseScrollDelta::LineDelta(_, y) => f64::from(y) * 3.0,
-            MouseScrollDelta::PixelDelta(point) => point.y / f64::from(self.grid.cell_height),
+            MouseScrollDelta::PixelDelta(point) => point.y / f64::from(pane.grid.cell_height),
         };
-        self.scroll_fraction += lines;
-        let whole_lines = self.scroll_fraction.trunc() as i32;
-        self.scroll_fraction -= f64::from(whole_lines);
+        pane.scroll_fraction += lines;
+        let whole_lines = pane.scroll_fraction.trunc() as i32;
+        pane.scroll_fraction -= f64::from(whole_lines);
         if whole_lines != 0 {
-            self.session.scroll(whole_lines);
+            pane.session.scroll(whole_lines);
             self.scheduler.invalidate();
         }
     }
@@ -349,7 +617,12 @@ impl State {
             return Ok(());
         }
         let now = Instant::now();
-        let snapshot = self.session.snapshot();
+        let focused = self.tabs.focused();
+        let Some(pane) = self.panes.get(&focused) else {
+            return Ok(());
+        };
+        let snapshot = pane.session.snapshot();
+        let [left, top] = pane.origin.unwrap_or_default();
         let cursor_position = snapshot.cursor.position;
         let viewport = self.renderer.size();
         let ime_cursor = cursor_position.map(|position| (snapshot.size, position, viewport));
@@ -357,8 +630,8 @@ impl State {
             && ime_cursor != self.previous_ime_cursor
         {
             let mode = self.renderer.mode();
-            let x = f64::from(position.column) * f64::from(grid.cell_width);
-            let y = f64::from(position.row) * f64::from(grid.cell_height);
+            let x = f64::from(left) + f64::from(position.column) * f64::from(grid.cell_width);
+            let y = f64::from(top) + f64::from(position.row) * f64::from(grid.cell_height);
             let [left, top] = mode.display_point([x, y], viewport);
             let [right, bottom] = mode.display_point(
                 [
@@ -381,13 +654,7 @@ impl State {
             && snapshot.cursor.shape != CursorShape::Hidden
             && self.composition.preedit.is_empty();
         let visible = self.scheduler.cursor_visible(now, blinking);
-        let scene = scene::convert(
-            &snapshot,
-            self.font_size,
-            visible,
-            &self.composition.preedit,
-            &self.banner,
-        );
+        let scene = self.compose(focused, &snapshot, visible);
         match self
             .renderer
             .draw(&scene, || self.window.pre_present_notify())?
@@ -418,7 +685,78 @@ impl State {
         Ok(())
     }
 
-    fn window_event(&mut self, events: &ActiveEventLoop, event: WindowEvent) -> AppResult<()> {
+    /// One scene for the active tab only: panes, dividers, tab bar. Hidden tabs cost nothing.
+    fn compose(
+        &self,
+        focused: PaneId,
+        snapshot: &retro_terminal::Snapshot,
+        cursor_visible: bool,
+    ) -> retro_renderer::scene::Scene {
+        let mut scene = scene::empty(snapshot, self.font_size);
+        let layout = &self.tabs.active().layout;
+        for id in layout.panes() {
+            let Some(pane) = self.panes.get(&id) else {
+                continue;
+            };
+            let Some(origin) = pane.origin else { continue };
+            if id == focused {
+                scene::pane(
+                    &mut scene,
+                    snapshot,
+                    origin,
+                    true,
+                    cursor_visible,
+                    &self.composition.preedit,
+                    &self.banner,
+                );
+            } else {
+                scene::pane(
+                    &mut scene,
+                    &pane.session.snapshot(),
+                    origin,
+                    false,
+                    true,
+                    "",
+                    "",
+                );
+            }
+        }
+        ui::dividers(&mut scene, &layout.dividers(self.area(), self.limits()));
+        let bar = self.tab_bar_height();
+        if bar > 0 {
+            let labels: Vec<_> = self
+                .tabs
+                .iter()
+                .enumerate()
+                .map(|(index, tab)| {
+                    let title = self
+                        .panes
+                        .get(&tab.layout.focus())
+                        .and_then(|pane| pane.title.as_deref())
+                        .unwrap_or(TITLE);
+                    (
+                        format!("{}: {title}", index + 1),
+                        index == self.tabs.active_index(),
+                    )
+                })
+                .collect();
+            let [width, _] = self.renderer.size();
+            ui::tab_bar(
+                &mut scene,
+                retro_renderer::scene::Rect {
+                    x: 0,
+                    y: 0,
+                    width,
+                    height: bar,
+                },
+                &labels,
+                u32::from(self.cell.0),
+            );
+        }
+        scene
+    }
+
+    fn window_event(&mut self, events: &ActiveEventLoop, event: WindowEvent) -> AppResult<bool> {
         match event {
             WindowEvent::Resized(size) => self.resize(size)?,
             WindowEvent::ScaleFactorChanged { .. } => self.resize(self.window.inner_size())?,
@@ -443,14 +781,18 @@ impl State {
                     self.banner.clear();
                     self.scheduler.invalidate();
                 }
+                let modes = self
+                    .focused()
+                    .map(|pane| pane.session.keyboard_modes())
+                    .unwrap_or_default();
                 if let Some(action) = input::key(
                     event.logical_key.as_ref(),
                     event.text.as_deref(),
                     event.physical_key,
                     self.modifiers,
-                    self.session.keyboard_modes(),
+                    modes,
                 ) {
-                    self.action(action)?;
+                    return self.action(action);
                 }
             }
             WindowEvent::Ime(event) => {
@@ -468,11 +810,7 @@ impl State {
                 button: MouseButton::Left,
                 state: ElementState::Pressed,
                 ..
-            } => {
-                self.selection_start = self.pointer_cell(false);
-                self.session.clear_selection();
-                self.scheduler.invalidate();
-            }
+            } => self.press(),
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: ElementState::Released,
@@ -484,21 +822,37 @@ impl State {
             WindowEvent::RedrawRequested => self.draw(events)?,
             _ => {}
         }
-        Ok(())
+        Ok(false)
     }
 
-    fn poll_terminal(&mut self) -> AppResult<bool> {
-        let update = self.session.poll()?;
+    /// Polls every session, hidden ones too. Returns true when the last pane closed.
+    fn poll_pane(&mut self, id: PaneId) -> AppResult<bool> {
+        let focused = self.tabs.focused() == id;
+        let visible = self.tabs.is_visible(id);
+        let Some(pane) = self.panes.get_mut(&id) else {
+            return Ok(false);
+        };
+        let update = pane.session.poll()?;
         if let Some(title) = update.title {
-            match title {
-                TitleChange::Set(title) => self.window.set_title(&title),
-                TitleChange::Reset => self.window.set_title(TITLE),
+            pane.title = match title {
+                TitleChange::Set(title) => Some(title),
+                TitleChange::Reset => None,
+            };
+            if focused {
+                self.window
+                    .set_title(pane.title.as_deref().unwrap_or(TITLE));
+            }
+            if self.tabs.len() >= 2 {
+                self.scheduler.invalidate();
             }
         }
-        if update.view_changed {
+        if update.view_changed && visible {
             self.scheduler.invalidate();
         }
-        Ok(update.exit_status.is_some())
+        if update.exit_status.is_some() {
+            return self.close_pane(id);
+        }
+        Ok(false)
     }
 }
 
@@ -540,6 +894,28 @@ fn font_error(config: &Config) -> ConfigError {
     ConfigError::Font {
         family: config.font.family.clone(),
     }
+}
+
+fn spawn(
+    proxy: &EventLoopProxy<Event>,
+    config: &Config,
+    grid: GridSize,
+    program: Option<Program>,
+) -> AppResult<Session> {
+    let wake = proxy.clone();
+    Ok(Session::spawn(
+        SessionOptions {
+            size: grid,
+            program,
+            working_directory: Some(&config.shell.working_directory)
+                .filter(|directory| !directory.is_empty())
+                .map(PathBuf::from),
+            scrollback_lines: config.terminal.scrollback_lines,
+        },
+        move |id| {
+            let _ = wake.send_event(Event::Terminal(id));
+        },
+    )?)
 }
 
 fn program(config: &Config) -> Option<Program> {
@@ -590,8 +966,10 @@ impl ApplicationHandler<Event> for App {
     fn user_event(&mut self, events: &ActiveEventLoop, event: Event) {
         let Some(state) = &mut self.state else { return };
         let result = match event {
-            Event::Terminal(id) if state.session.id() == id => state.poll_terminal(),
-            Event::Terminal(_) => return,
+            Event::Terminal(id) => match state.sessions.get(&id) {
+                Some(&pane) => state.poll_pane(pane),
+                None => return,
+            },
             Event::Paste(text) => {
                 state.paste_pending = false;
                 match text {
@@ -617,8 +995,12 @@ impl ApplicationHandler<Event> for App {
         }
         if matches!(event, WindowEvent::CloseRequested | WindowEvent::Destroyed) {
             self.close(events, None);
-        } else if let Err(error) = state.window_event(events, event) {
-            self.close(events, Some(error));
+            return;
+        }
+        match state.window_event(events, event) {
+            Ok(false) => {}
+            Ok(true) => self.close(events, None),
+            Err(error) => self.close(events, Some(error)),
         }
     }
 

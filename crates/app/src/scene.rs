@@ -50,19 +50,20 @@ pub(crate) fn pointer_cell(
     point: [f64; 2],
     viewport: [u32; 2],
     mode: retro_renderer::RenderMode,
+    [left, top]: [u32; 2],
     grid: GridSize,
     clamp: bool,
 ) -> Option<Position> {
     let [x, y] = mode.source_point(point, viewport);
-    cell_at(x, y, grid, clamp)
+    cell_at(x - f64::from(left), y - f64::from(top), grid, clamp)
 }
 
-fn bounds(position: Position, grid: GridSize) -> Rect {
+fn bounds(position: Position, grid: GridSize, [left, top]: [u32; 2]) -> Rect {
     let width = u32::from(grid.cell_width);
     let height = u32::from(grid.cell_height);
     Rect {
-        x: u32::from(position.column) * width,
-        y: u32::from(position.row) * height,
+        x: left + u32::from(position.column) * width,
+        y: top + u32::from(position.row) * height,
         width,
         height,
     }
@@ -85,6 +86,16 @@ fn snapped_cursor(snapshot: &Snapshot, visible: bool) -> Option<(Position, Curso
     Some((position, snapshot.cursor.shape))
 }
 
+/// An empty window scene in the colors and metrics of `snapshot`.
+pub(crate) fn empty(snapshot: &Snapshot, font_size: u16) -> Scene {
+    Scene::new(
+        rgb(snapshot.background),
+        font_size,
+        snapshot.size.cell_height,
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn convert(
     snapshot: &Snapshot,
     font_size: u16,
@@ -92,15 +103,52 @@ pub(crate) fn convert(
     preedit: &str,
     banner: &str,
 ) -> Scene {
-    let mut scene = Scene::new(
-        rgb(snapshot.background),
-        font_size,
-        snapshot.size.cell_height,
+    let mut scene = empty(snapshot, font_size);
+    pane(
+        &mut scene,
+        snapshot,
+        [0, 0],
+        true,
+        cursor_visible,
+        preedit,
+        banner,
     );
-    let cursor = snapped_cursor(snapshot, cursor_visible);
+    scene
+}
+
+/// Appends one pane at `origin`. An unfocused pane draws a steady hollow cursor and no preedit.
+pub(crate) fn pane(
+    scene: &mut Scene,
+    snapshot: &Snapshot,
+    origin: [u32; 2],
+    focused: bool,
+    cursor_visible: bool,
+    preedit: &str,
+    banner: &str,
+) {
+    let cursor = if focused {
+        snapped_cursor(snapshot, cursor_visible)
+    } else {
+        snapped_cursor(snapshot, true).map(|(position, shape)| {
+            let shape = if shape == CursorShape::Hidden {
+                shape
+            } else {
+                CursorShape::HollowBlock
+            };
+            (position, shape)
+        })
+    };
+    let preedit = if focused { preedit } else { "" };
+    let pane_background = rgb(snapshot.background);
+    if pane_background != scene.clear {
+        let mut area = bounds(Position { column: 0, row: 0 }, snapshot.size, origin);
+        area.width *= u32::from(snapshot.size.columns);
+        area.height *= u32::from(snapshot.size.rows);
+        scene.fill(area, pane_background);
+    }
 
     for cell in &snapshot.cells {
-        let area = bounds(cell.position, snapshot.size);
+        let area = bounds(cell.position, snapshot.size, origin);
         let background = if cell.selected {
             SELECTION
         } else if cell.attributes.inverse {
@@ -108,7 +156,7 @@ pub(crate) fn convert(
         } else {
             rgb(cell.background)
         };
-        if background != scene.clear {
+        if background != pane_background {
             scene.fill(area, background);
         }
     }
@@ -120,7 +168,7 @@ pub(crate) fn convert(
         ) {
             continue;
         }
-        let mut area = bounds(cell.position, snapshot.size);
+        let mut area = bounds(cell.position, snapshot.size, origin);
         if cell.width == CellWidth::Wide && cell.position.column + 1 < snapshot.size.columns {
             area.width *= 2;
         }
@@ -135,7 +183,7 @@ pub(crate) fn convert(
         if let Some((position, shape)) = cursor
             && position == cell.position
         {
-            cursor_fill(&mut scene, area, rgb(snapshot.cursor.color), shape);
+            cursor_fill(scene, area, rgb(snapshot.cursor.color), shape);
             if shape == CursorShape::Block {
                 foreground = if cell.attributes.inverse {
                     rgb(cell.foreground)
@@ -143,7 +191,7 @@ pub(crate) fn convert(
                     rgb(cell.background)
                 };
                 if foreground == rgb(snapshot.cursor.color) {
-                    foreground = scene.clear;
+                    foreground = pane_background;
                 }
             }
         }
@@ -152,7 +200,7 @@ pub(crate) fn convert(
         }
         if let Some(underline) = cell.attributes.underline {
             decoration(
-                &mut scene,
+                scene,
                 area,
                 cell.underline_color.map_or(foreground, rgb),
                 underline,
@@ -190,11 +238,11 @@ pub(crate) fn convert(
         && !preedit.is_empty()
         && position.column < snapshot.size.columns
     {
-        let mut area = bounds(position, snapshot.size);
+        let mut area = bounds(position, snapshot.size, origin);
         let remaining = snapshot.size.columns - position.column;
         let columns = preedit.width().clamp(1, usize::from(remaining)) as u16;
         area.width *= u32::from(columns);
-        overlay(&mut scene, area, SELECTION, preedit);
+        overlay(scene, area, SELECTION, preedit);
     }
     if !banner.is_empty() && snapshot.size.rows > 0 {
         let mut area = bounds(
@@ -203,11 +251,11 @@ pub(crate) fn convert(
                 row: snapshot.size.rows - 1,
             },
             snapshot.size,
+            origin,
         );
         area.width *= u32::from(snapshot.size.columns);
-        overlay(&mut scene, area, BANNER, banner);
+        overlay(scene, area, BANNER, banner);
     }
-    scene
 }
 
 /// Covers `area` with one fill and one glyph cluster that replaces the glyphs below it.
@@ -347,15 +395,21 @@ mod tests {
         let last_cell = Some(Position { column: 9, row: 2 });
         let last_cell_pixel = crt.display_point([79.0, 59.0], size);
         assert_eq!(
-            pointer_cell(last_cell_pixel, size, crt, grid, false),
+            pointer_cell(last_cell_pixel, size, crt, [0, 0], grid, false),
             last_cell
         );
         let padding = crt.display_point([82.0, 60.5], size);
-        assert_eq!(pointer_cell(padding, size, crt, grid, false), None);
-        assert_eq!(pointer_cell(padding, size, crt, grid, true), last_cell);
-        assert_eq!(pointer_cell([0.0, 0.0], size, crt, grid, false), None);
+        assert_eq!(pointer_cell(padding, size, crt, [0, 0], grid, false), None);
         assert_eq!(
-            pointer_cell([0.0, 0.0], size, RenderMode::Plain, grid, false),
+            pointer_cell(padding, size, crt, [0, 0], grid, true),
+            last_cell
+        );
+        assert_eq!(
+            pointer_cell([0.0, 0.0], size, crt, [0, 0], grid, false),
+            None
+        );
+        assert_eq!(
+            pointer_cell([0.0, 0.0], size, RenderMode::Plain, [0, 0], grid, false),
             Some(Position { column: 0, row: 0 })
         );
     }
@@ -451,5 +505,145 @@ mod tests {
             assert_eq!(scene.glyphs[0].bounds, expected);
             assert_eq!(scene.fills.last().map(|fill| fill.bounds), Some(expected));
         }
+    }
+
+    fn sample(background: retro_terminal::Rgb, shape: CursorShape) -> Snapshot {
+        let grid = GridSize {
+            columns: 4,
+            rows: 2,
+            cell_width: 8,
+            cell_height: 20,
+        };
+        let cell = |column, character, selected| Cell {
+            position: Position { row: 0, column },
+            character,
+            combining: Box::default(),
+            foreground: retro_terminal::Rgb(220, 220, 220),
+            background,
+            underline_color: None,
+            width: CellWidth::Single,
+            attributes: CellAttributes {
+                bold: false,
+                dim: false,
+                italic: false,
+                inverse: false,
+                hidden: false,
+                strikeout: false,
+                wrapped: false,
+                underline: None,
+            },
+            selected,
+        };
+        Snapshot {
+            size: grid,
+            background,
+            cells: vec![cell(0, 'a', false), cell(1, 'b', true), cell(2, ' ', false)],
+            cursor: Cursor {
+                position: Some(Position { row: 0, column: 2 }),
+                shape,
+                blinking: true,
+                color: retro_terminal::Rgb(255, 255, 255),
+            },
+            display_offset: 0,
+            alternate_screen: false,
+            bracketed_paste: false,
+        }
+    }
+
+    #[test]
+    fn single_pane_scene_equals_convert() {
+        let snapshot = sample(retro_terminal::Rgb(8, 8, 8), CursorShape::Block);
+        let base = convert(&snapshot, 14, true, "に", "config error");
+        let mut window = empty(&snapshot, 14);
+        pane(
+            &mut window,
+            &snapshot,
+            [0, 0],
+            true,
+            true,
+            "に",
+            "config error",
+        );
+        assert_eq!(window.clear, base.clear);
+        assert_eq!(
+            (window.font_size, window.line_height),
+            (base.font_size, base.line_height)
+        );
+        assert_eq!(format!("{:?}", window.fills), format!("{:?}", base.fills));
+        assert_eq!(format!("{:?}", window.glyphs), format!("{:?}", base.glyphs));
+        let whole_grid = Rect {
+            x: 0,
+            y: 0,
+            width: 32,
+            height: 40,
+        };
+        assert!(window.fills.iter().all(|fill| fill.bounds != whole_grid));
+    }
+
+    #[test]
+    fn pane_origin_offsets_fills_and_glyphs() {
+        let snapshot = sample(retro_terminal::Rgb(8, 8, 8), CursorShape::Block);
+        let base = convert(&snapshot, 14, true, "", "");
+        let mut moved = empty(&snapshot, 14);
+        pane(&mut moved, &snapshot, [100, 40], true, true, "", "");
+        let shift = |rect: Rect| Rect {
+            x: rect.x + 100,
+            y: rect.y + 40,
+            ..rect
+        };
+        let fills: Vec<_> = base.fills.iter().map(|fill| shift(fill.bounds)).collect();
+        let moved_fills: Vec<_> = moved.fills.iter().map(|fill| fill.bounds).collect();
+        assert_eq!(moved_fills, fills);
+        let glyphs: Vec<_> = base
+            .glyphs
+            .iter()
+            .map(|glyph| shift(glyph.bounds))
+            .collect();
+        let moved_glyphs: Vec<_> = moved.glyphs.iter().map(|glyph| glyph.bounds).collect();
+        assert_eq!(moved_glyphs, glyphs);
+
+        let mut other = Scene::new(Rgb(0, 0, 0), 14, 20);
+        pane(&mut other, &snapshot, [100, 40], true, true, "", "");
+        assert_eq!(
+            other.fills[0].bounds,
+            Rect {
+                x: 100,
+                y: 40,
+                width: 32,
+                height: 40
+            }
+        );
+        assert_eq!(other.fills[0].color, Rgb(8, 8, 8));
+    }
+
+    #[test]
+    fn unfocused_pane_draws_a_hollow_cursor_and_no_preedit() {
+        let snapshot = sample(retro_terminal::Rgb(8, 8, 8), CursorShape::Block);
+        let mut scene = empty(&snapshot, 14);
+        pane(&mut scene, &snapshot, [0, 0], false, false, "に", "");
+        let cursor = Rect {
+            x: 16,
+            y: 0,
+            width: 8,
+            height: 20,
+        };
+        let edges = scene
+            .fills
+            .iter()
+            .filter(|fill| fill.color == Rgb(255, 255, 255))
+            .count();
+        assert_eq!(edges, 4, "hollow block draws four edges, ignoring blink");
+        assert!(scene.fills.iter().all(|fill| fill.bounds != cursor));
+        assert!(scene.glyphs.iter().all(|glyph| glyph.cluster.text != "に"));
+
+        let hidden = sample(retro_terminal::Rgb(8, 8, 8), CursorShape::Hidden);
+        let mut scene = empty(&hidden, 14);
+        pane(&mut scene, &hidden, [0, 0], false, true, "", "");
+        assert!(
+            scene
+                .fills
+                .iter()
+                .all(|fill| fill.color != Rgb(255, 255, 255))
+        );
     }
 }

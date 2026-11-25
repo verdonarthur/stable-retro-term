@@ -1,11 +1,20 @@
 use retro_terminal::KeyboardModes;
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 
+use crate::layout::{Axis, Direction};
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     Copy,
     Paste,
     ReloadConfig,
+    NewTab,
+    ClosePane,
+    NextTab,
+    PreviousTab,
+    Split(Axis),
+    Focus(Direction),
+    Resize(Direction),
     Bytes(Vec<u8>),
 }
 
@@ -37,6 +46,23 @@ pub(crate) fn key(
         if character.eq_ignore_ascii_case("r") {
             return Some(Action::ReloadConfig);
         }
+        if character.eq_ignore_ascii_case("t") {
+            return Some(Action::NewTab);
+        }
+        if character.eq_ignore_ascii_case("w") {
+            return Some(Action::ClosePane);
+        }
+        if character.eq_ignore_ascii_case("e") {
+            return Some(Action::Split(Axis::Columns));
+        }
+        if character.eq_ignore_ascii_case("o") {
+            return Some(Action::Split(Axis::Rows));
+        }
+    }
+    if let Key::Named(named) = key
+        && let Some(action) = layout_action(named, ctrl, shift, alt)
+    {
+        return Some(action);
     }
     if modes.application_keypad
         && modifiers.is_empty()
@@ -75,6 +101,25 @@ pub(crate) fn key(
         bytes.insert(0, 0x1b);
     }
     Some(Action::Bytes(bytes))
+}
+
+/// Ctrl+PageDown/PageUp switch tabs, Alt+Arrow moves focus, Ctrl+Shift+Arrow resizes.
+fn layout_action(key: NamedKey, ctrl: bool, shift: bool, alt: bool) -> Option<Action> {
+    use NamedKey::*;
+    let direction = match key {
+        ArrowLeft => Some(Direction::Left),
+        ArrowRight => Some(Direction::Right),
+        ArrowUp => Some(Direction::Up),
+        ArrowDown => Some(Direction::Down),
+        _ => None,
+    };
+    match (ctrl, shift, alt) {
+        (true, false, false) if key == PageDown => Some(Action::NextTab),
+        (true, false, false) if key == PageUp => Some(Action::PreviousTab),
+        (false, false, true) => direction.map(Action::Focus),
+        (true, true, false) => direction.map(Action::Resize),
+        _ => None,
+    }
 }
 
 fn control_byte(character: &str) -> Option<u8> {
@@ -213,6 +258,58 @@ mod tests {
         assert_eq!(
             key(Key::Character("r"), None, reload, ctrl, modes),
             Some(Action::Bytes(vec![0x12]))
+        );
+    }
+
+    #[test]
+    fn tab_and_split_shortcuts_take_precedence_and_plain_keys_keep_their_bytes() {
+        let modes = KeyboardModes::default();
+        let ctrl = ModifiersState::CONTROL;
+        let ctrl_shift = ctrl | ModifiersState::SHIFT;
+        let alt = ModifiersState::ALT;
+        let code = PhysicalKey::Code(KeyCode::KeyT);
+        let character = |text, modifiers| key(Key::Character(text), None, code, modifiers, modes);
+        let named = |named, modifiers| key(Key::Named(named), None, code, modifiers, modes);
+        assert_eq!(character("T", ctrl_shift), Some(Action::NewTab));
+        assert_eq!(character("W", ctrl_shift), Some(Action::ClosePane));
+        assert_eq!(
+            character("E", ctrl_shift),
+            Some(Action::Split(Axis::Columns))
+        );
+        assert_eq!(character("O", ctrl_shift), Some(Action::Split(Axis::Rows)));
+        assert_eq!(named(NamedKey::PageDown, ctrl), Some(Action::NextTab));
+        assert_eq!(named(NamedKey::PageUp, ctrl), Some(Action::PreviousTab));
+        for (arrow, direction) in [
+            (NamedKey::ArrowLeft, Direction::Left),
+            (NamedKey::ArrowRight, Direction::Right),
+            (NamedKey::ArrowUp, Direction::Up),
+            (NamedKey::ArrowDown, Direction::Down),
+        ] {
+            assert_eq!(named(arrow, alt), Some(Action::Focus(direction)));
+            assert_eq!(named(arrow, ctrl_shift), Some(Action::Resize(direction)));
+        }
+
+        assert_eq!(character("t", ctrl), Some(Action::Bytes(vec![0x14])));
+        assert_eq!(character("w", ctrl), Some(Action::Bytes(vec![0x17])));
+        assert_eq!(
+            named(NamedKey::ArrowLeft, ctrl),
+            Some(Action::Bytes(b"\x1b[1;5D".to_vec()))
+        );
+        assert_eq!(
+            named(NamedKey::ArrowLeft, ModifiersState::SHIFT),
+            Some(Action::Bytes(b"\x1b[1;2D".to_vec()))
+        );
+        assert_eq!(
+            named(NamedKey::PageDown, ModifiersState::empty()),
+            Some(Action::Bytes(b"\x1b[6~".to_vec()))
+        );
+        assert_eq!(
+            named(NamedKey::PageDown, ctrl_shift),
+            Some(Action::Bytes(b"\x1b[6;6~".to_vec()))
+        );
+        assert_eq!(
+            named(NamedKey::ArrowUp, alt | ModifiersState::SHIFT),
+            Some(Action::Bytes(b"\x1b[1;4A".to_vec()))
         );
     }
 

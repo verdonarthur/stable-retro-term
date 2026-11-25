@@ -14,7 +14,8 @@ A missing default file gives the defaults.
 ## Precedence
 
 Built-in defaults, then the selected preset, then the file, then the command line.
-`--plain` turns off the CRT effects. A program after `--` replaces `shell.program` and `shell.args`.
+`--plain` turns off the CRT effects. A program after `--` runs in the first pane only.
+New panes and tabs start `shell.program` with `shell.args`, or your login shell.
 Command-line values stay active after a reload.
 
 ## Keys
@@ -45,7 +46,7 @@ The preset files are in [`assets/presets/`](../assets/presets/). Keys in your fi
 Press Ctrl+Shift+R to read the file again.
 
 - Applies to the open window: `preset`, `effects.crt`, and the `font` keys. A font change resizes the grid and the shell.
-- Applies to new shells only: the `terminal` and `shell` keys. retro-term shows a message when they change.
+- Applies to new panes and tabs only: the `terminal` and `shell` keys. retro-term shows a message when they change.
 
 ## Errors
 
