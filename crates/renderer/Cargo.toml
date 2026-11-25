@@ -8,3 +8,10 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+glyphon.workspace = true
+wgpu.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true

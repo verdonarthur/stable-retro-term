@@ -26,6 +26,25 @@ fn help_and_usage_errors() {
 }
 
 #[test]
+fn run_has_help_and_reports_an_unavailable_cargo() {
+    let help = xtask(workspace_root(), &["run", "--help"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&help), 0);
+    assert!(String::from_utf8_lossy(&help.stdout).contains("Wayland"));
+
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+    let out = xtask(dir.path(), &["run"])
+        .env("PATH", dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 1);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cannot start `cargo`"));
+    assert!(dir.path().join("target/xtask/logs/run.log").is_file());
+}
+
+#[test]
 fn doctor_reports_missing_tools_with_exit_3() {
     let empty = tempfile::tempdir().unwrap();
     let out = xtask(workspace_root(), &["doctor", "--json"])

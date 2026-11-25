@@ -13,7 +13,8 @@ mod snapshot;
 
 pub use input::Input;
 pub use session::{
-    Program, Session, SessionError, SessionId, SessionOptions, SessionUpdate, TitleChange,
+    KeyboardModes, Program, Session, SessionError, SessionId, SessionOptions, SessionUpdate,
+    TitleChange,
 };
 pub use snapshot::{
     Cell, CellAttributes, CellWidth, Cursor, CursorShape, GridSize, Position, Rgb, Snapshot,

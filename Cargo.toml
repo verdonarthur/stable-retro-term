@@ -4,6 +4,11 @@ members = ["crates/*", "xtask"]
 
 [workspace.dependencies]
 alacritty_terminal = { version = "0.26.0", default-features = false }
+glyphon = "0.11.0"
+pollster = "0.4.0"
+wgpu = { version = "29.0.0", default-features = false, features = ["std", "vulkan", "wgsl"] }
+winit = { version = "0.30.12", default-features = false, features = ["rwh_06", "wayland", "wayland-dlopen"] }
+wl-clipboard-rs = "0.9.3"
 
 [workspace.package]
 version = "0.1.0"

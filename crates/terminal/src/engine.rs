@@ -12,7 +12,8 @@ use crate::snapshot::{
 };
 
 impl GridSize {
-    pub(crate) fn is_valid(self) -> bool {
+    /// Check the terminal minimums and the PTY's physical-pixel limits.
+    pub fn is_valid(self) -> bool {
         usize::from(self.columns) >= term::MIN_COLUMNS
             && usize::from(self.rows) >= term::MIN_SCREEN_LINES
             && self.cell_width != 0
@@ -116,6 +117,7 @@ pub(crate) fn snapshot<T: EventListener>(terminal: &Term<T>, size: GridSize) -> 
     }));
     Snapshot {
         size,
+        background: rgb(view.colors, Color::Named(NamedColor::Background)),
         cells,
         cursor: Cursor {
             position: position(view.cursor.point),

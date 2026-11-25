@@ -17,6 +17,7 @@ install command. It never installs anything.
 | `cargo xtask check -p retro-terminal` | Check one package (fmt, deny, and workflow lint are skipped) |
 | `cargo xtask check --step clippy` / `--skip deny` | Run only, or leave out, some steps |
 | `cargo xtask check --allow-missing` | Do not fail because a pinned tool is not installed |
+| `cargo xtask run` | Launch the plain Wayland terminal with development diagnostics |
 | `cargo xtask worktree create <name> --base <rev>` | New worktree `.worktrees/<name>` on branch `<name>` |
 | `cargo xtask worktree list [--json]` | Show worktrees, branches, and dirty state |
 | `cargo xtask worktree remove <name> [--force]` | Remove a worktree; the branch is kept |
@@ -38,8 +39,40 @@ cargo test --locked --workspace
 
 ## Headless and display tests
 
-All checks are headless. No test needs a display yet. A test that needs a display must be
-`#[ignore = "needs display"]`; `check` then reports the ignored tests as `not_run`, never as passed.
+The standard checks run without a display. Display tests use
+`#[ignore = "needs display"]`. The check report lists them as `not_run`.
+
+## Run the plain terminal
+
+Use a native Wayland session on Linux. Install the Wayland client library and
+`libxkbcommon` at runtime, a Vulkan loader and driver, and a system monospace font
+with fallback fonts for the scripts you use. Clipboard copy and paste require the
+compositor to expose `ext-data-control` or `wlr-data-control`. Use Ctrl+Shift+C to
+copy the selection and Ctrl+Shift+V to paste. The paste action accepts up to 8 MiB
+of UTF-8 text.
+
+```sh
+cargo build --locked --release -p retro-app --bin retro-term
+cargo xtask run
+cargo test --locked -p retro-renderer --test gpu_render -- --ignored --nocapture
+```
+
+`run` launches a debug build with CRT effects disabled and development diagnostics
+enabled. It records the Wayland adapter and successful presentations in
+`target/xtask/logs/run.log`. The diagnostics contain no PTY or clipboard contents.
+The log is replaced on each launch.
+
+For the smoke check, use a shell and a keyboard-driven full-screen program such
+as `vi`. Check ordinary input, application cursor and keypad keys, IME composition
+and commit, selection, clipboard integration with another application, scrolling
+through shell history, window resize, and a display scale change. Check that the
+frame log stops growing while the screen is idle with a non-blinking cursor.
+Exit the shell. Launch once more and close the window while the shell is running.
+Record the compositor, GPU, driver, and any missing coverage in the Task 04 plan.
+
+The GPU test reads pixels from the production draw path with fixed font fixtures.
+If only a software adapter is available, set `RETRO_TERM_TEST_SOFTWARE_GPU=1` for
+an optional correctness run. Hardware verification remains pending in that case.
 
 ## Editor and debugger
 
