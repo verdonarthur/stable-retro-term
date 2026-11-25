@@ -199,7 +199,7 @@ Proposed task contract:
 | `cargo xtask check` | Format check, Clippy, headless unit/integration/doc tests, and config/shader/workflow validation |
 | `cargo xtask check --package retro-terminal` | Focused edit/test loop; CI still runs the full required set |
 | `cargo xtask run` | Launch the app with explicit development configuration and logs |
-| `cargo xtask worktree create <task> --base <ref> --plan <path>` | Create an isolated branch/worktree and transfer its task plan |
+| `cargo xtask worktree create <task> --base <ref>` | Create an isolated branch/worktree; tracked plans come with it |
 | `cargo xtask worktree list` | Show worktree paths, branches, and dirty state |
 | `cargo xtask worktree remove <task>` | Remove only a finished, clean checkout; preserve uncommitted work and notes |
 | `cargo xtask perf --candidate <binary> --baseline <binary> --suite <file> --output <file>` | Run matched resource measurements and emit results |
@@ -227,8 +227,9 @@ Never alter global Git configuration or run a force-clean as part of setup/clean
 Before removal, check tracked changes, untracked files, and task notes; refuse destructive cleanup instead of using `--force`.
 Do not delete branches automatically. Record any retained worktree and why it remains.
 
-Ignored plans do not appear in a new Git worktree automatically.
-The explicit `--plan` option transfers the selected plan and its referenced architecture/index documents into matching `docs/AI/` paths in the worktree and records the source/base SHA. Refuse to overwrite newer worktree notes.
+Plans under `docs/AI/` are tracked by Git, so every worktree gets them without a transfer step.
+`worktree remove` refuses when the worktree has uncommitted, untracked, or ignored notes. With `--force` it first copies
+changed, untracked, and ignored files under `docs/AI/` to `target/xtask/rescued/` in the main checkout.
 Do not copy arbitrary secrets, local application settings, or other ignored directories.
 Keep durable decisions in tracked `docs/decisions/` and architecture documentation so a fresh clone has essential context.
 The main README must explain the initial clone/doctor/worktree/check sequence and the prerequisite of a usable Git base.

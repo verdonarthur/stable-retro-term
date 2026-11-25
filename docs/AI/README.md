@@ -19,7 +19,7 @@ Base commit: `bc5f6ab` on `main`. Task 01 was done directly on `main` (setup exc
 | Plan | Status | Prerequisites |
 | --- | --- | --- |
 | [01 — Repository setup](implementation/01-repository-setup.md) | Done (uncommitted) | None. |
-| [02 — Developer tools, worktrees, and CI](implementation/02-developer-tools-and-ci.md) | Pending | 01 completed. |
+| [02 — Developer tools, worktrees, and CI](implementation/02-developer-tools-and-ci.md) | Implemented (uncommitted; auxiliary tools not run) | 01 completed. |
 | [03 — Terminal engine and PTY sessions](implementation/03-terminal-engine.md) | Pending | 02 completed. |
 | [04 — Plain graphical terminal](implementation/04-plain-terminal.md) | Pending | 03 completed. |
 | [05 — Performance harness and baseline gate](implementation/05-performance-baseline.md) | Pending | 04 completed. |
