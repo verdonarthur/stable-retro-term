@@ -1,6 +1,8 @@
 //! GPU rendering of terminal content into a texture or window surface.
 
+mod effects;
 pub mod scene;
+pub use effects::RenderMode;
 mod text;
 
 use std::error::Error;
@@ -21,6 +23,8 @@ pub struct GridRenderer {
     pipeline: wgpu::RenderPipeline,
     fills: wgpu::Buffer,
     fill_bytes: Vec<u8>,
+    crt: Option<effects::Crt>,
+    format: wgpu::TextureFormat,
 }
 
 impl GridRenderer {
@@ -30,6 +34,16 @@ impl GridRenderer {
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
         fonts: Fonts,
+    ) -> Self {
+        Self::with_mode(device, queue, format, fonts, RenderMode::Plain)
+    }
+
+    pub fn with_mode(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        fonts: Fonts,
+        mode: RenderMode,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::include_wgsl!("rect.wgsl"));
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -65,6 +79,8 @@ impl GridRenderer {
             pipeline,
             fills: fill_buffer(device, FILL_STRIDE),
             fill_bytes: Vec::new(),
+            crt: (mode == RenderMode::StaticCrt).then(|| effects::Crt::new(device, format)),
+            format,
         }
     }
 
@@ -80,6 +96,13 @@ impl GridRenderer {
         size: [u32; 2],
         scene: &Scene,
     ) -> RenderResult<wgpu::SubmissionIndex> {
+        if size.contains(&0) {
+            return Err(io::Error::other("cannot draw a zero-sized terminal").into());
+        }
+        let scene_view = self
+            .crt
+            .as_mut()
+            .map(|crt| crt.prepare(device, self.format, size));
         self.text.prepare(device, queue, size, scene)?;
         self.fill_bytes.clear();
         let x_unit = 2.0 / size[0] as f32;
@@ -109,7 +132,7 @@ impl GridRenderer {
         {
             let mut pass = commands.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
+                    view: scene_view.unwrap_or(view),
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -125,6 +148,9 @@ impl GridRenderer {
                 pass.draw(0..4, 0..scene.fills.len() as u32);
             }
             self.text.draw(&mut pass)?;
+        }
+        if let Some(crt) = &self.crt {
+            crt.draw(&mut commands, view);
         }
         let submission = queue.submit([commands.finish()]);
         self.text.trim();
@@ -158,6 +184,7 @@ pub struct SurfaceRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     grid: GridRenderer,
+    mode: RenderMode,
     lost: Arc<AtomicBool>,
     size: [u32; 2],
 }
@@ -166,6 +193,14 @@ impl SurfaceRenderer {
     pub async fn new(
         instance: Instance,
         target: impl Into<SurfaceTarget<'static>>,
+    ) -> RenderResult<Self> {
+        Self::with_mode(instance, target, RenderMode::Plain).await
+    }
+
+    pub async fn with_mode(
+        instance: Instance,
+        target: impl Into<SurfaceTarget<'static>>,
+        mode: RenderMode,
     ) -> RenderResult<Self> {
         let surface = instance.create_surface(target)?;
         let adapter = instance
@@ -178,7 +213,7 @@ impl SurfaceRenderer {
             .request_device(&wgpu::DeviceDescriptor::default())
             .await?;
         let config = surface_config(&surface, &adapter)?;
-        let grid = GridRenderer::new(&device, &queue, config.format, Fonts::system());
+        let grid = GridRenderer::with_mode(&device, &queue, config.format, Fonts::system(), mode);
         let lost = Arc::new(AtomicBool::new(false));
         let device_lost = lost.clone();
         device.set_device_lost_callback(move |_, _| device_lost.store(true, Ordering::Release));
@@ -190,9 +225,18 @@ impl SurfaceRenderer {
             queue,
             config,
             grid,
+            mode,
             lost,
             size: [0, 0],
         })
+    }
+
+    pub fn mode(&self) -> RenderMode {
+        self.mode
+    }
+
+    pub fn size(&self) -> [u32; 2] {
+        self.size
     }
 
     pub fn adapter_info(&self) -> wgpu::AdapterInfo {
@@ -226,8 +270,13 @@ impl SurfaceRenderer {
         let surface = self.instance.create_surface(target)?;
         let config = surface_config(&surface, &self.adapter)?;
         if config.format != self.config.format {
-            self.grid =
-                GridRenderer::new(&self.device, &self.queue, config.format, Fonts::system());
+            self.grid = GridRenderer::with_mode(
+                &self.device,
+                &self.queue,
+                config.format,
+                Fonts::system(),
+                self.mode,
+            );
         }
         self.surface = surface;
         self.config = config;

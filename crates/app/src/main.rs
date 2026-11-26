@@ -1,12 +1,13 @@
 use std::ffi::OsString;
 use std::process::ExitCode;
 
-const USAGE: &str = "Usage: retro-term [--development] [-- COMMAND [ARG ...]]";
+const USAGE: &str = "Usage: retro-term [--development] [--plain] [-- COMMAND [ARG ...]]";
 
 enum Options {
     Help,
     Run {
         development: bool,
+        plain: bool,
         command: Option<(String, Vec<String>)>,
     },
 }
@@ -14,9 +15,11 @@ enum Options {
 fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Options, ()> {
     let mut args = args.into_iter();
     let mut development = false;
+    let mut plain = false;
     for arg in args.by_ref() {
         match arg.to_str() {
             Some("--development") if !development => development = true,
+            Some("--plain") if !plain => plain = true,
             Some("--help" | "-h") => return Ok(Options::Help),
             Some("--") => {
                 let executable = args.next().filter(|name| !name.is_empty()).ok_or(())?;
@@ -27,6 +30,7 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Options, ()> {
                     .map_err(|_| ())?;
                 return Ok(Options::Run {
                     development,
+                    plain,
                     command: Some((executable, arguments)),
                 });
             }
@@ -35,16 +39,18 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Options, ()> {
     }
     Ok(Options::Run {
         development,
+        plain,
         command: None,
     })
 }
 
 fn main() -> ExitCode {
-    let (development, command) = match parse(std::env::args_os().skip(1)) {
+    let (development, plain, command) = match parse(std::env::args_os().skip(1)) {
         Ok(Options::Run {
             development,
+            plain,
             command,
-        }) => (development, command),
+        }) => (development, plain, command),
         Ok(Options::Help) => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -55,8 +61,9 @@ fn main() -> ExitCode {
         }
     };
     #[cfg(target_os = "linux")]
-    match retro_app::run_with_program(
+    match retro_app::run_with_mode(
         development,
+        plain,
         command.map(|(executable, arguments)| retro_terminal::Program {
             executable,
             arguments,
@@ -70,7 +77,7 @@ fn main() -> ExitCode {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (development, command);
+        let _ = (development, plain, command);
         eprintln!("retro-term requires Linux and Wayland");
         ExitCode::FAILURE
     }
@@ -82,17 +89,36 @@ mod tests {
 
     #[test]
     fn keeps_default_shell_and_forwards_arguments_after_separator() {
-        assert!(matches!(parse([]), Ok(Options::Run { command: None, .. })));
+        assert!(matches!(
+            parse([]),
+            Ok(Options::Run {
+                command: None,
+                plain: false,
+                ..
+            })
+        ));
         let Ok(Options::Run {
             development,
+            plain,
             command: Some((executable, arguments)),
-        }) = parse(["--development", "--", "a b", "--help", ""].map(OsString::from))
+        }) = parse(
+            [
+                "--development",
+                "--plain",
+                "--",
+                "a b",
+                "--help",
+                "--plain",
+                "",
+            ]
+            .map(OsString::from),
+        )
         else {
             panic!("expected an explicit program");
         };
-        assert!(development);
+        assert!(development && plain);
         assert_eq!(executable, "a b");
-        assert_eq!(arguments, ["--help", ""]);
+        assert_eq!(arguments, ["--help", "--plain", ""]);
         assert!(parse([OsString::from("--")]).is_err());
     }
 }

@@ -189,6 +189,10 @@ class Fixture:
         self.connection.close()
 
 
+def candidate_flags(request):
+    return ["--plain"] if request["candidate_plain"] else []
+
+
 @contextmanager
 def terminal(request, env, directory, kind, blink=False):
     socket_path = directory / "pty.sock"
@@ -197,7 +201,7 @@ def terminal(request, env, directory, kind, blink=False):
     timeout = request["suite"]["timeout_ms"] / 1000
     fixture_args = [sys.executable, str(HERE / "fixture.py"), str(socket_path)]
     if kind == "candidate":
-        argv = [request[kind], "--", *fixture_args]
+        argv = [request[kind], *candidate_flags(request), "--", *fixture_args]
     else:
         argv = [request[kind], "--config-file", request["config"], "-o",
                 f'cursor.style.blinking={"Always" if blink else "Never"!r}', "-e", *fixture_args]
@@ -261,7 +265,7 @@ def cursor_run(driver, frame, duration, blink):
         timeout = remain if first_missing is None else min(remain, 0.1)
         shot = driver.frame(timeout)
         if shot is not None:
-            state = visible(shot, color, grid)
+            state = visible(shot, color, grid, crt=frame.get("crt", False), area=frame["area"])
             if state is None:
                 if first_missing is None:
                     first_missing = time.monotonic()
@@ -314,6 +318,8 @@ def leg(request, driver, env, directory, kind, scenario):
     timeout = suite["timeout_ms"] / 1000
     result = {"valid": False, "metrics": dict.fromkeys(METRICS), "engines": None, "evidence": []}
     recorder = None
+    driver.crt = kind == "candidate" and not request["candidate_plain"]
+    driver.crt_area = None
     try:
         with terminal(request, env, directory, kind, scenario == "blink") as (
             launch, child, recorder, fixture

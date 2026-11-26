@@ -40,7 +40,7 @@ fn invalid_suite_and_missing_binary_have_distinct_exit_codes() {
             .arg(suite)
             .arg("--output")
             .arg(&report)
-            .arg("--preflight")
+            .args(["--preflight", "--candidate-plain"])
             .output()
             .unwrap()
             .status
@@ -54,6 +54,7 @@ fn invalid_suite_and_missing_binary_have_distinct_exit_codes() {
     assert_eq!(run(&valid), Some(3));
     let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
     assert_eq!(report["status"], "unverified");
+    assert_eq!(report["candidate_mode"], "plain");
     assert_eq!(report["reasons"].as_array().unwrap().len(), 2);
 }
 
@@ -77,6 +78,7 @@ fn rejects_a_mismatched_baseline_before_display_access() {
         .unwrap();
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     let report = fs::read_to_string(report).unwrap();
+    assert!(report.contains("static-crt"));
     assert!(report.contains("expected Alacritty"));
     assert!(report.contains("99.0.0"));
 }

@@ -3,8 +3,8 @@ import time
 import unittest
 
 from metrics import compare, drm_client, gpu_delta, summarize
-from run import Fixture, WorkloadError, assert_frame, matching
-from wayland import DisplayTimeout, visible
+from run import Fixture, WorkloadError, assert_frame, candidate_flags, matching
+from wayland import DisplayTimeout, crt_colors, typed_cell, visible
 
 
 class Counters(unittest.TestCase):
@@ -109,6 +109,45 @@ class Display(unittest.TestCase):
                          {"area": [4, 3, 32, 24], "cursor": True})
         self.assertIsNone(visible(frame, [1, 2, 3], [6, 8, 32, 24]))
         self.assertIsNone(visible(frame, color, [7, 8, 32, 28]))
+
+    def test_candidate_mode_flag(self):
+        self.assertEqual(candidate_flags({"candidate_plain": True}), ["--plain"])
+        self.assertEqual(candidate_flags({"candidate_plain": False}), [])
+
+    def test_crt_marker_cursor_and_typed_cell(self):
+        for grid, viewport in (([10, 12, 96, 190], (101, 198)), ([6, 6, 48, 114], (53, 122))):
+            with self.subTest(grid=grid):
+                self.check_crt_frame(grid, viewport)
+
+    def check_crt_frame(self, grid, viewport):
+        color, typed = [51, 91, 130], [81, 97, 150]
+        width, height, stride, offset = 122, 220, 500, 8
+        viewport_w, viewport_h = viewport
+        image = bytearray(offset + stride * height)
+        palette = [crt_colors(rgb) for rgb in (color, typed, [240, 240, 240])]
+        image[offset:offset + 3] = palette[0][0]  # Unrelated desktop pixel.
+        for y in range(viewport_h):
+            for x in range(viewport_w):
+                dx, dy = (2 * (x + 0.5) / viewport_w - 1,
+                          2 * (y + 0.5) / viewport_h - 1)
+                scale = 1.025 + 0.018 * (dx * dx + dy * dy)
+                sx, sy = (1 + dx * scale) * viewport_w / 2, (1 + dy * scale) * viewport_h / 2
+                if not (0 <= sx < grid[2] and 0 <= sy < grid[3]):
+                    continue
+                col, row = int(sx) // 8, int(sy) // 19
+                entry = int((col, row) == (0, 3))
+                if ((col, row) == (1, 1) or
+                        ((row == 2 and col < 5) or entry) and 2 <= sx % 8 < 6 and 5 <= sy % 19 < 14):
+                    entry = 2
+                index = offset + (y + 11) * stride + (x + 9) * 4
+                image[index:index + 3] = palette[entry][y % 2]
+        frame = width, height, stride, offset, bytes(image)
+        evidence = visible(frame, color, grid, crt=True)
+        self.assertIsNotNone(evidence)
+        self.assertTrue(evidence["cursor"])
+        self.assertTrue(typed_cell(frame, evidence, grid, (1, typed)))
+        self.assertFalse(typed_cell(frame, evidence, grid, (2, typed)))
+        self.assertIsNone(visible(frame, [51, 91, 131], grid, crt=True))
 
     def test_missing_and_late_frames(self):
         class Missing:
