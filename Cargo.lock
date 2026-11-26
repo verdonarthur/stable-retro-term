@@ -1677,6 +1677,7 @@ dependencies = [
  "retro-terminal",
  "serde",
  "toml",
+ "toml_edit",
  "unicode-width",
  "winit",
  "wl-clipboard-rs",
@@ -2140,6 +2141,7 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 

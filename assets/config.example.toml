@@ -1,6 +1,6 @@
 # retro-term configuration. Every key shows its default value.
 # Location: $XDG_CONFIG_HOME/retro-term/config.toml or ~/.config/retro-term/config.toml.
-# Reload with Ctrl+Shift+R. See docs/configuration.md.
+# Reload with Ctrl+Shift+R. Ctrl+Shift+P opens the settings panel. See docs/configuration.md.
 
 # Built-in preset: "static-crt", "plain", or "animated-crt" (experimental). Keys below override the preset.
 preset = "static-crt"

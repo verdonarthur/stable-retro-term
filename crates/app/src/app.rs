@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
@@ -24,6 +25,7 @@ use crate::layout::{Limits, PaneId, Rect};
 use crate::platform;
 use crate::scene;
 use crate::scheduler::Scheduler;
+use crate::settings::{Outcome, Settings};
 use crate::tabs::Tabs;
 use crate::ui;
 
@@ -131,6 +133,8 @@ struct State {
     previous_ime_cursor: Option<(GridSize, Position, [u32; 2])>,
     /// Counts presented frames. Only the animated CRT mode reads it.
     animation_frame: u32,
+    /// The open settings panel. It takes every key while open.
+    settings: Option<Settings>,
 }
 
 impl State {
@@ -210,6 +214,7 @@ impl State {
             banner: String::new(),
             previous_ime_cursor: None,
             animation_frame: 0,
+            settings: None,
         };
         state.insert(pane, session, grid);
         if let Some(error) = startup_error {
@@ -235,12 +240,95 @@ impl State {
             .set_presentable(grid.is_some() && !self.occluded);
         if grid.is_none() {
             self.renderer.resize([0, 0])?;
+            self.close_settings_if_too_small();
             return Ok(());
         }
         self.renderer.resize(size.into())?;
         self.cell = (cell_width, line_height);
         self.font_size = font_size;
+        self.close_settings_if_too_small();
         self.layout_panes()
+    }
+
+    fn window_rect(&self) -> retro_renderer::scene::Rect {
+        let [width, height] = self.renderer.size();
+        retro_renderer::scene::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        }
+    }
+
+    fn settings_fit(&self, settings: &Settings) -> bool {
+        let cell = [u32::from(self.cell.0), u32::from(self.cell.1)];
+        ui::settings_box(self.window_rect(), &settings.lines(), cell).is_some()
+    }
+
+    fn open_settings(&mut self) {
+        let path = self.source.path().map(Path::to_path_buf);
+        let overrides = self.overrides.clone();
+        let settings = match path.as_deref().map(fs::read_to_string) {
+            Some(Err(error)) if error.kind() != io::ErrorKind::NotFound => {
+                Settings::unreadable(path.unwrap_or_default(), &error, overrides)
+            }
+            Some(Ok(text)) => Settings::open(path, Some(text), overrides),
+            _ => Settings::open(path, None, overrides),
+        };
+        if !self.settings_fit(&settings) {
+            self.show("window too small for settings".into());
+            return;
+        }
+        self.window.set_ime_allowed(false);
+        self.settings = Some(settings);
+        self.scheduler.invalidate();
+    }
+
+    fn close_settings(&mut self) {
+        if self.settings.take().is_some() {
+            self.window.set_ime_allowed(true);
+            self.scheduler.invalidate();
+        }
+    }
+
+    fn close_settings_if_too_small(&mut self) {
+        if self
+            .settings
+            .as_ref()
+            .is_some_and(|settings| !self.settings_fit(settings))
+        {
+            self.close_settings();
+            self.show("window too small for settings; closed without saving".into());
+        }
+    }
+
+    /// Saves, then applies the file through `reload`, the same as Ctrl+Shift+R.
+    fn settings_outcome(&mut self, outcome: Outcome) -> AppResult<()> {
+        match outcome {
+            Outcome::Nothing => {}
+            Outcome::Redraw => self.scheduler.invalidate(),
+            Outcome::Close => self.close_settings(),
+            Outcome::Save(text) => {
+                let Some(settings) = &mut self.settings else {
+                    return Ok(());
+                };
+                let Some(path) = settings.path() else {
+                    return Ok(());
+                };
+                match config::save(path, settings.original(), &text) {
+                    Ok(()) => {
+                        self.close_settings();
+                        self.reload()?;
+                    }
+                    Err(error) => {
+                        eprintln!("retro-term: settings: {error}");
+                        settings.set_status(error.to_string());
+                        self.scheduler.invalidate();
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Gives every pane in every tab, hidden ones too, the grid of its layout rect.
@@ -478,6 +566,7 @@ impl State {
             }
             Action::Paste => {}
             Action::ReloadConfig => self.reload()?,
+            Action::Settings => self.open_settings(),
             Action::NewTab => {
                 let previous = self.tabs.active_index();
                 let pane = self.tabs.open();
@@ -556,6 +645,9 @@ impl State {
     }
 
     fn press(&mut self) {
+        if self.settings.is_some() {
+            return;
+        }
         self.selection_start = None;
         let Some([x, y]) = self.pointer_source() else {
             return;
@@ -585,7 +677,8 @@ impl State {
     }
 
     fn drag(&mut self) {
-        if let Some((id, start)) = self.selection_start
+        if self.settings.is_none()
+            && let Some((id, start)) = self.selection_start
             && let Some(end) = self.pointer_cell(id, true)
             && let Some(pane) = self.panes.get_mut(&id)
         {
@@ -654,7 +747,8 @@ impl State {
         let blinking = snapshot.cursor.blinking
             && cursor_position.is_some()
             && snapshot.cursor.shape != CursorShape::Hidden
-            && self.composition.preedit.is_empty();
+            && self.composition.preedit.is_empty()
+            && self.settings.is_none();
         let visible = self.scheduler.cursor_visible(now, blinking);
         let scene = self.compose(focused, &snapshot, visible);
         self.renderer.set_animation_frame(self.animation_frame);
@@ -711,7 +805,11 @@ impl State {
                     true,
                     cursor_visible,
                     &self.composition.preedit,
-                    &self.banner,
+                    if self.settings.is_some() {
+                        ""
+                    } else {
+                        &self.banner
+                    },
                 );
             } else {
                 scene::pane(
@@ -757,6 +855,10 @@ impl State {
                 u32::from(self.cell.0),
             );
         }
+        if let Some(settings) = &self.settings {
+            let cell = [u32::from(self.cell.0), u32::from(self.cell.1)];
+            ui::settings_panel(&mut scene, self.window_rect(), &settings.lines(), cell);
+        }
         scene
     }
 
@@ -785,6 +887,15 @@ impl State {
                     self.banner.clear();
                     self.scheduler.invalidate();
                 }
+                if let Some(settings) = &mut self.settings {
+                    if let Some(key) =
+                        input::settings_key(event.logical_key.as_ref(), self.modifiers)
+                    {
+                        let outcome = settings.key(key);
+                        self.settings_outcome(outcome)?;
+                    }
+                    return Ok(false);
+                }
                 let modes = self
                     .focused()
                     .map(|pane| pane.session.keyboard_modes())
@@ -800,7 +911,8 @@ impl State {
                 }
             }
             WindowEvent::Ime(event) => {
-                if let Some(text) = self.composition.update(event) {
+                let committed = self.composition.update(event);
+                if let Some(text) = committed.filter(|_| self.settings.is_none()) {
                     self.send_input(Input::Text(&text))?;
                 }
                 self.scheduler.invalidate();

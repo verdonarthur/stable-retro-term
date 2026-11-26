@@ -12,6 +12,7 @@ mod platform;
 mod scene;
 #[cfg(target_os = "linux")]
 mod scheduler;
+pub mod settings;
 pub mod tabs;
 #[cfg(target_os = "linux")]
 mod ui;

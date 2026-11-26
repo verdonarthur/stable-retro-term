@@ -44,27 +44,8 @@ The standard checks run without a display. Display tests use
 
 ## Run the plain terminal
 
-Use a native Wayland session on Linux. Install the Wayland client library and
-`libxkbcommon` at runtime, a Vulkan loader and driver, and a system monospace font
-with fallback fonts for the scripts you use. Clipboard copy and paste require the
-compositor to expose `ext-data-control` or `wlr-data-control`. Use Ctrl+Shift+C to
-copy the selection and Ctrl+Shift+V to paste. The paste action accepts up to 8 MiB
-of UTF-8 text.
-
-Tabs and splits use these shortcuts:
-
-| Shortcut | Action |
-| --- | --- |
-| Ctrl+Shift+T | Open a tab after the active tab |
-| Ctrl+Shift+W | Close the focused pane (no confirmation) |
-| Ctrl+Shift+E | Split the focused pane side by side |
-| Ctrl+Shift+O | Split the focused pane stacked |
-| Ctrl+PageDown / Ctrl+PageUp | Next / previous tab |
-| Alt+Arrow | Move the focus to the adjacent pane |
-| Ctrl+Shift+Arrow | Move the nearest divider by one cell |
-
-These shortcuts are not sent to the shell. Click a pane to focus it; click a tab to select it.
-The wheel scrolls the pane under the pointer. A shell exit closes its pane; the last pane closes the window.
+Use a native Wayland session on Linux. The runtime requirements, keyboard shortcuts, and mouse
+actions are in [usage](usage.md).
 
 ```sh
 cargo build --locked --release -p retro-app --bin retro-term

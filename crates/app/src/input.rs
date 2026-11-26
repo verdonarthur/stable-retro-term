@@ -2,12 +2,14 @@ use retro_terminal::KeyboardModes;
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 
 use crate::layout::{Axis, Direction};
+use crate::settings;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     Copy,
     Paste,
     ReloadConfig,
+    Settings,
     NewTab,
     ClosePane,
     NextTab,
@@ -45,6 +47,9 @@ pub(crate) fn key(
         }
         if character.eq_ignore_ascii_case("r") {
             return Some(Action::ReloadConfig);
+        }
+        if character.eq_ignore_ascii_case("p") {
+            return Some(Action::Settings);
         }
         if character.eq_ignore_ascii_case("t") {
             return Some(Action::NewTab);
@@ -101,6 +106,27 @@ pub(crate) fn key(
         bytes.insert(0, 0x1b);
     }
     Some(Action::Bytes(bytes))
+}
+
+/// Keys of the open settings panel. Ctrl+Shift+P closes it like Escape.
+pub(crate) fn settings_key(key: Key<&str>, modifiers: ModifiersState) -> Option<settings::Key> {
+    use settings::Key as Panel;
+    match key {
+        Key::Named(NamedKey::ArrowUp) => Some(Panel::Up),
+        Key::Named(NamedKey::ArrowDown) => Some(Panel::Down),
+        Key::Named(NamedKey::ArrowLeft) => Some(Panel::Left),
+        Key::Named(NamedKey::ArrowRight) => Some(Panel::Right),
+        Key::Named(NamedKey::Enter) => Some(Panel::Enter),
+        Key::Named(NamedKey::Escape) => Some(Panel::Escape),
+        Key::Character(character)
+            if modifiers.control_key()
+                && modifiers.shift_key()
+                && character.eq_ignore_ascii_case("p") =>
+        {
+            Some(Panel::Escape)
+        }
+        _ => None,
+    }
 }
 
 /// Ctrl+PageDown/PageUp switch tabs, Alt+Arrow moves focus, Ctrl+Shift+Arrow resizes.
@@ -311,6 +337,39 @@ mod tests {
             named(NamedKey::ArrowUp, alt | ModifiersState::SHIFT),
             Some(Action::Bytes(b"\x1b[1;4A".to_vec()))
         );
+    }
+
+    #[test]
+    fn settings_shortcut_and_panel_keys() {
+        let modes = KeyboardModes::default();
+        let code = PhysicalKey::Code(KeyCode::KeyP);
+        let ctrl = ModifiersState::CONTROL;
+        let ctrl_shift = ctrl | ModifiersState::SHIFT;
+        assert_eq!(
+            key(Key::Character("P"), None, code, ctrl_shift, modes),
+            Some(Action::Settings)
+        );
+        assert_eq!(
+            key(Key::Character("p"), None, code, ctrl, modes),
+            Some(Action::Bytes(vec![0x10]))
+        );
+        let none = ModifiersState::empty();
+        for (named, expected) in [
+            (NamedKey::ArrowUp, settings::Key::Up),
+            (NamedKey::ArrowDown, settings::Key::Down),
+            (NamedKey::ArrowLeft, settings::Key::Left),
+            (NamedKey::ArrowRight, settings::Key::Right),
+            (NamedKey::Enter, settings::Key::Enter),
+            (NamedKey::Escape, settings::Key::Escape),
+        ] {
+            assert_eq!(settings_key(Key::Named(named), none), Some(expected));
+        }
+        assert_eq!(
+            settings_key(Key::Character("P"), ctrl_shift),
+            Some(settings::Key::Escape)
+        );
+        assert_eq!(settings_key(Key::Character("p"), none), None);
+        assert_eq!(settings_key(Key::Character("q"), ctrl_shift), None);
     }
 
     #[test]
