@@ -22,7 +22,18 @@ fn open(text: Option<&str>) -> Settings {
 }
 
 fn select(settings: &mut Settings, row: usize) {
-    for _ in 0..row {
+    let (category, offset) = match row {
+        PRESET => (0, 0),
+        CRT => (2, 0),
+        SIZE => (1, 0),
+        LINE_HEIGHT => (1, 1),
+        SCROLLBACK => (3, 0),
+        _ => unreachable!(),
+    };
+    for _ in 0..category {
+        settings.key(Key::NextCategory);
+    }
+    for _ in 0..offset {
         settings.key(Key::Down);
     }
 }
@@ -69,7 +80,7 @@ fn edit_appends_missing_keys_and_tables() {
     );
     assert_eq!(
         change("[font]\nsize = 14\n", PRESET, Key::Right),
-        "preset = \"plain\"\n[font]\nsize = 14\n"
+        "preset = \"plain\"\n"
     );
 }
 
@@ -78,8 +89,8 @@ fn enter_without_edits_closes_without_saving() {
     let mut settings = open(Some("[font]\nsize = 14\n"));
     settings.key(Key::Down);
     settings.key(Key::Up);
-    assert_eq!(settings.key(Key::Enter), Outcome::Close);
-    assert_eq!(open(None).key(Key::Enter), Outcome::Close);
+    assert_eq!(settings.key(Key::Enter), Outcome::Nothing);
+    assert_eq!(open(None).key(Key::Enter), Outcome::Nothing);
 }
 
 #[test]
@@ -88,7 +99,7 @@ fn toggle_twice_saves_the_original_text() {
     select(&mut settings, CRT);
     settings.key(Key::Right);
     settings.key(Key::Left);
-    assert_eq!(settings.key(Key::Enter), Outcome::Close);
+    assert_eq!(settings.key(Key::Enter), Outcome::Nothing);
 }
 
 #[test]
@@ -178,11 +189,11 @@ fn missing_path_opens_read_only() {
 }
 
 #[test]
-fn preview_uses_the_real_precedence() {
+fn choosing_a_profile_replaces_visual_overrides() {
     let mut settings = open(Some("[effects]\ncrt = true\n"));
     assert_eq!(settings.key(Key::Right), Outcome::Redraw);
     assert_eq!(settings.preview().preset, "plain");
-    assert!(settings.preview().effects.crt);
+    assert!(!settings.preview().effects.crt);
 }
 
 #[test]
@@ -260,4 +271,60 @@ fn no_op_keys_do_not_redraw() {
     assert_eq!(settings.key(Key::Right), Outcome::Redraw);
     let mut read_only = open(Some("[font\n"));
     assert_eq!(read_only.key(Key::Down), Outcome::Nothing);
+}
+
+#[test]
+fn effects_are_editable_and_categories_cycle() {
+    let mut settings = open(None);
+    for label in ["Terminal", "Effects"] {
+        assert_eq!(settings.key(Key::NextCategory), Outcome::Redraw);
+        assert!(
+            settings
+                .lines()
+                .iter()
+                .any(|(line, _)| line.contains(label))
+        );
+    }
+    settings.key(Key::Down); // Legacy flicker
+    settings.key(Key::Down); // Bloom
+    assert_eq!(settings.key(Key::Right), Outcome::Redraw);
+    assert!(saved(&mut settings).contains("bloom = 5"));
+}
+
+#[test]
+fn profile_list_selects_a_profile_before_saving() {
+    let mut settings = open(None);
+    assert_eq!(settings.key(Key::BrowseProfiles), Outcome::Redraw);
+    assert!(
+        settings
+            .lines()
+            .iter()
+            .any(|(line, _)| line.contains("default-amber"))
+    );
+    settings.key(Key::Down);
+    assert_eq!(settings.key(Key::Escape), Outcome::Redraw);
+    assert_eq!(settings.preview().preset, "static-crt");
+    settings.key(Key::BrowseProfiles);
+    settings.key(Key::Down);
+    assert_eq!(settings.key(Key::Enter), Outcome::Redraw);
+    assert_eq!(settings.preview().preset, "plain");
+    assert_eq!(saved(&mut settings), "preset = \"plain\"\n");
+}
+
+#[test]
+fn edited_profile_is_custom_after_save_and_reopen() {
+    let mut settings = open(Some("preset = \"default-amber\"\n"));
+    select(&mut settings, CRT);
+    settings.key(Key::Right);
+    let text = saved(&mut settings);
+    settings.mark_saved(text.clone());
+    assert_eq!(settings.key(Key::Enter), Outcome::Nothing);
+    let settings = open(Some(&text));
+    assert!(
+        settings
+            .lines()
+            .iter()
+            .any(|(line, selected)| *selected && line.contains("custom"))
+    );
+    assert_eq!(settings.preview().effects.levels["bloom"], 60);
 }

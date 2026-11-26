@@ -76,7 +76,10 @@ pub(crate) fn settings_box(window: Rect, lines: &[(String, bool)], cell: [u32; 2
     let [cell_width, line_height] = cell.map(|value| value.max(1));
     let (columns, rows) = (window.width / cell_width, window.height / line_height);
     let longest = lines.iter().map(|(text, _)| columns_of(text)).max()?;
-    let inner = u32::try_from(longest).ok()?.min(columns.checked_sub(2)?);
+    let inner = u32::try_from(longest)
+        .ok()?
+        .max(MIN_PANEL_COLUMNS)
+        .min(columns.checked_sub(2)?);
     let height = u32::try_from(lines.len()).ok()? + 2;
     if inner < MIN_PANEL_COLUMNS || height > rows {
         return None;
@@ -100,6 +103,71 @@ pub(crate) fn settings_panel(
     let Some(panel) = settings_box(window, lines, cell) else {
         return;
     };
+    draw_panel(scene, panel, lines, cell);
+}
+
+/// Uses the whole window and wraps text before choosing the visible rows.
+pub(crate) fn full_panel(
+    scene: &mut Scene,
+    window: Rect,
+    lines: &[(String, bool)],
+    cell: [u32; 2],
+    scroll: usize,
+) {
+    let [width, height] = cell;
+    let columns = (window.width / width).saturating_sub(2) as usize;
+    let rows = (window.height / height).saturating_sub(2) as usize;
+    if columns < 2 || rows == 0 {
+        scene.glyphs.clear();
+        scene.fill(window, TAB);
+        return;
+    }
+    let wrapped = wrap_panel(lines, columns - 1);
+    let last_start = wrapped.len().saturating_sub(rows);
+    let start = wrapped
+        .iter()
+        .position(|(_, selected)| *selected)
+        .map_or(scroll, |index| index.saturating_add(1).saturating_sub(rows))
+        .min(last_start);
+    let end = (start + rows).min(wrapped.len());
+    draw_panel(scene, window, &wrapped[start..end], cell);
+}
+
+pub(crate) fn full_panel_scroll_limit(
+    window: Rect,
+    lines: &[(String, bool)],
+    cell: [u32; 2],
+) -> usize {
+    let [width, height] = cell;
+    let columns = (window.width / width).saturating_sub(3).max(1) as usize;
+    let rows = (window.height / height).saturating_sub(2) as usize;
+    wrap_panel(lines, columns).len().saturating_sub(rows)
+}
+
+fn wrap_panel(lines: &[(String, bool)], columns: usize) -> Vec<(String, bool)> {
+    // Leave one column of slack for fractional font advances.
+    let mut wrapped = Vec::new();
+    for (line, selected) in lines {
+        let mut rest = line.as_str();
+        while columns_of(rest) > columns {
+            let prefix = truncate(rest, columns);
+            let end = prefix
+                .trim_end()
+                .rfind(' ')
+                .filter(|&index| index > 1)
+                .unwrap_or(prefix.len());
+            if end == 0 {
+                break;
+            }
+            wrapped.push((rest[..end].to_owned(), *selected));
+            rest = rest[end..].trim_start();
+        }
+        wrapped.push((rest.to_owned(), *selected));
+    }
+    wrapped
+}
+
+fn draw_panel(scene: &mut Scene, panel: Rect, lines: &[(String, bool)], cell: [u32; 2]) {
     let [cell_width, line_height] = cell;
     scene.glyphs.retain(|glyph| {
         let bounds = glyph.bounds;
@@ -124,15 +192,12 @@ pub(crate) fn settings_panel(
             TAB_TEXT
         };
         let text = truncate(line, inner as usize);
-        let columns = columns_of(&text);
-        if columns == 0 {
+        if text.is_empty() {
             continue;
         }
+        // A shaped line can advance farther than its rounded cell count.
         scene.glyphs.push(Glyph {
-            bounds: Rect {
-                width: columns as u32 * cell_width,
-                ..row
-            },
+            bounds: row,
             color,
             cluster: Cluster {
                 text,
@@ -174,6 +239,24 @@ mod tests {
             width,
             height: 20,
         }
+    }
+
+    #[test]
+    fn full_panel_uses_window_and_keeps_wrapped_text() {
+        let window = Rect {
+            height: 100,
+            ..bar(160)
+        };
+        let mut scene = Scene::new(Rgb(0, 0, 0), 14, 20);
+        let lines = vec![("Next tab Ctrl+PageDown / Ctrl+PageUp".into(), false)];
+        full_panel(&mut scene, window, &lines, [8, 20], 0);
+        assert_eq!(scene.fills[0].bounds, window);
+        assert!(
+            scene
+                .glyphs
+                .iter()
+                .any(|glyph| glyph.cluster.text.contains("Ctrl+PageUp"))
+        );
     }
 
     #[test]
@@ -298,6 +381,7 @@ mod tests {
             ]
         );
         assert_eq!(scene.glyphs[3].color, TAB);
+        assert_eq!(scene.glyphs[3].bounds, scene.fills[1].bounds);
 
         let wide = vec![("y".repeat(200), false)];
         let panel = settings_box(window, &wide, cell).unwrap();

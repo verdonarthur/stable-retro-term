@@ -4,6 +4,58 @@ use wgpu::util::DeviceExt;
 const SCALE: f32 = 1.025;
 const CURVATURE: f32 = 0.018;
 
+pub const CRT_CONTROLS: [(&str, &str, u8); 28] = [
+    ("bloom", "Bloom", 0),
+    ("burn_in", "Burn-in", 0),
+    ("static_noise", "Static noise", 0),
+    ("jitter", "Jitter", 0),
+    ("glow_line", "Glow line", 0),
+    ("curvature", "Screen curvature", 30),
+    ("ambient_light", "Ambient light", 0),
+    ("flicker", "Flicker", 0),
+    ("horizontal_sync", "Horizontal sync", 0),
+    ("rgb_shift", "RGB shift", 0),
+    ("frame_shininess", "Frame shininess", 0),
+    ("scanlines", "Scanlines", 12),
+    ("red", "Red phosphor", 95),
+    ("green", "Green phosphor", 100),
+    ("blue", "Blue phosphor", 100),
+    ("brightness", "Brightness", 50),
+    ("contrast", "Contrast", 50),
+    ("margin", "Margin", 25),
+    ("radius", "Corner radius", 0),
+    ("frame_size", "Frame size", 0),
+    ("background_red", "Background red", 0),
+    ("background_green", "Background green", 0),
+    ("background_blue", "Background blue", 0),
+    ("chroma", "Chroma", 100),
+    ("frame_red", "Frame red", 100),
+    ("frame_green", "Frame green", 100),
+    ("frame_blue", "Frame blue", 100),
+    ("saturation", "Saturation lift", 0),
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CrtLevels(pub [u8; CRT_CONTROLS.len()]);
+
+impl Default for CrtLevels {
+    fn default() -> Self {
+        Self(CRT_CONTROLS.map(|(_, _, default)| default))
+    }
+}
+
+impl CrtLevels {
+    fn geometry(self) -> (f32, f32) {
+        (
+            1.0 / (1.0
+                - f32::from(self.0[17]) * 0.001
+                - f32::from(self.0[19]) * 0.0012
+                - f32::from(self.0[18]) * 0.001),
+            f32::from(self.0[5]) * CURVATURE / 30.0,
+        )
+    }
+}
+
 /// Brightness gains of the animated CRT flicker. The capture probe in
 /// xtask/src/perf/wayland.py copies these values.
 pub const FLICKER_GAINS: [f32; 3] = [1.0, 0.975, 0.955];
@@ -26,6 +78,7 @@ pub enum RenderMode {
     StaticCrt,
     /// Static CRT with a flicker gain that changes only on frames the app already draws.
     AnimatedCrt,
+    CustomCrt(CrtLevels, bool),
 }
 
 impl RenderMode {
@@ -44,8 +97,12 @@ impl RenderMode {
         let [w, h] = size.map(f64::from);
         let [x, y] = [point[0] * 2.0 / w - 1.0, point[1] * 2.0 / h - 1.0];
         let radius_squared = x * x + y * y;
-        let scale = f64::from(SCALE);
-        let curve = f64::from(CURVATURE) * radius_squared;
+        let (scale, curvature) = match self {
+            Self::CustomCrt(levels, _) => levels.geometry(),
+            _ => (SCALE, CURVATURE),
+        };
+        let scale = f64::from(scale);
+        let curve = f64::from(curvature) * radius_squared;
         let mut factor = scale + curve;
         if inverse {
             // The warp preserves direction. Solve for the inverse radial scale.
@@ -61,65 +118,148 @@ impl RenderMode {
 
 pub(crate) struct Crt {
     pipeline: wgpu::RenderPipeline,
+    persistence: Option<wgpu::RenderPipeline>,
     sampler: wgpu::Sampler,
     params: wgpu::Buffer,
     animated: bool,
+    custom: bool,
     target: Option<Target>,
 }
 
 struct Target {
     size: [u32; 2],
     view: wgpu::TextureView,
-    bind: wgpu::BindGroup,
+    history: [wgpu::TextureView; 2],
+    binds: [wgpu::BindGroup; 2],
+    previous: usize,
 }
 
 impl Crt {
-    pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat, animated: bool) -> Self {
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        mode: RenderMode,
+    ) -> Self {
+        let (levels, animated, custom) = match mode {
+            RenderMode::CustomCrt(levels, animation) => (levels, animation, true),
+            _ => (CrtLevels::default(), mode == RenderMode::AnimatedCrt, false),
+        };
         let shader = device.create_shader_module(wgpu::include_wgsl!("shaders/crt.wgsl"));
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("CRT"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vertex"),
-                buffers: &[],
-                compilation_options: Default::default(),
+        let texture = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fragment"),
-                targets: &[Some(format.into())],
-                compilation_options: Default::default(),
-            }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
+            count: None,
+        };
+        let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("CRT bindings"),
+            entries: &[
+                texture(0),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                texture(3),
+            ],
         });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("CRT layout"),
+            bind_group_layouts: &[Some(&bind_layout)],
+            ..Default::default()
+        });
+        let make_pipeline = |entry| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("CRT"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vertex"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(entry),
+                    targets: &[Some(format.into())],
+                    compilation_options: Default::default(),
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let pipeline = make_pipeline("fragment");
+        let persistence = (levels.0[1] != 0).then(|| make_pipeline("persistence"));
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let (scale, curve) = if custom {
+            levels.geometry()
+        } else {
+            (SCALE, CURVATURE)
+        };
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("CRT geometry"),
-            contents: &[SCALE, CURVATURE, 1.0, 0.0].map(f32::to_ne_bytes).concat(),
+            contents: &[scale, curve, 1.0, if custom { 0.0 } else { -1.0 }]
+                .into_iter()
+                .chain(levels.0.map(|v| f32::from(v) / 100.0))
+                .flat_map(f32::to_ne_bytes)
+                .collect::<Vec<_>>(),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         Self {
             pipeline,
+            persistence,
             sampler,
             params,
             animated,
+            custom,
             target: None,
         }
     }
 
     /// Static mode never writes the parameters after creation.
     pub(crate) fn set_frame(&self, queue: &wgpu::Queue, frame: u32) {
-        if self.animated {
-            queue.write_buffer(&self.params, 8, &flicker_gain(frame).to_ne_bytes());
+        if self.custom || self.animated {
+            let gain = if self.animated {
+                flicker_gain(frame)
+            } else {
+                1.0
+            };
+            queue.write_buffer(
+                &self.params,
+                8,
+                &[
+                    gain,
+                    if self.custom {
+                        (frame % 16384) as f32
+                    } else {
+                        -1.0
+                    },
+                ]
+                .map(f32::to_ne_bytes)
+                .concat(),
+            );
         }
     }
 
@@ -135,7 +275,7 @@ impl Crt {
             .is_none_or(|target| target.size != size)
         {
             self.target = None;
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
+            let descriptor = wgpu::TextureDescriptor {
                 label: Some("CRT scene"),
                 size: wgpu::Extent3d {
                     width: size[0],
@@ -149,32 +289,88 @@ impl Crt {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
+            };
+            let view = device
+                .create_texture(&descriptor)
+                .create_view(&Default::default());
+            let history = std::array::from_fn(|_| {
+                device
+                    .create_texture(&wgpu::TextureDescriptor {
+                        label: Some("CRT history"),
+                        size: if self.persistence.is_some() {
+                            descriptor.size
+                        } else {
+                            wgpu::Extent3d {
+                                width: 1,
+                                height: 1,
+                                depth_or_array_layers: 1,
+                            }
+                        },
+                        ..descriptor
+                    })
+                    .create_view(&Default::default())
             });
-            let view = texture.create_view(&Default::default());
-            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("CRT scene"),
-                layout: &self.pipeline.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.params.as_entire_binding(),
-                    },
-                ],
+            let binds = history.each_ref().map(|history_view| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("CRT scene"),
+                    layout: &self.pipeline.get_bind_group_layout(0),
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: self.params.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(history_view),
+                        },
+                    ],
+                })
             });
-            self.target = Some(Target { size, view, bind });
+            self.target = Some(Target {
+                size,
+                view,
+                history,
+                binds,
+                previous: 0,
+            });
         }
         &self.target.as_ref().unwrap().view
     }
 
-    pub(crate) fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+    pub(crate) fn draw(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let target = self.target.as_mut().unwrap();
+        if let Some(pipeline) = &self.persistence {
+            let next = 1 - target.previous;
+            Self::draw_pass(
+                encoder,
+                &target.history[next],
+                pipeline,
+                &target.binds[target.previous],
+            );
+            target.previous = next;
+        }
+        Self::draw_pass(
+            encoder,
+            view,
+            &self.pipeline,
+            &target.binds[target.previous],
+        );
+    }
+
+    fn draw_pass(
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        pipeline: &wgpu::RenderPipeline,
+        bind: &wgpu::BindGroup,
+    ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
@@ -187,8 +383,8 @@ impl Crt {
             })],
             ..Default::default()
         });
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.target.as_ref().unwrap().bind, &[]);
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, bind, &[]);
         pass.draw(0..3, 0..1);
     }
 }

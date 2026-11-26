@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 const BLINK: Duration = Duration::from_millis(500);
+const EFFECT_FRAME: Duration = Duration::from_millis(33);
 const RETRY: Duration = Duration::from_millis(50);
 
 #[derive(Default)]
@@ -9,6 +10,7 @@ pub(crate) struct Scheduler {
     pending: bool,
     presentable: bool,
     surface_occluded: bool,
+    effect_at: Option<Instant>,
     blink_at: Option<Instant>,
     retry_at: Option<Instant>,
     cursor_hidden: bool,
@@ -28,6 +30,7 @@ impl Scheduler {
         } else {
             self.pending = false;
             self.blink_at = None;
+            self.effect_at = None;
             self.cursor_hidden = false;
         }
     }
@@ -37,6 +40,10 @@ impl Scheduler {
             if self.blink_at.is_some_and(|deadline| deadline <= now) {
                 self.cursor_hidden = !self.cursor_hidden;
                 self.blink_at = Some(now + BLINK);
+                self.invalidate();
+            }
+            if self.effect_at.is_some_and(|deadline| deadline <= now) {
+                self.effect_at = None;
                 self.invalidate();
             }
             if self.retry_at.is_some_and(|deadline| deadline <= now) {
@@ -71,6 +78,10 @@ impl Scheduler {
         !self.cursor_hidden
     }
 
+    pub(crate) fn schedule_effect(&mut self, now: Instant, enabled: bool) {
+        self.effect_at = enabled.then_some(now + EFFECT_FRAME);
+    }
+
     pub(crate) fn retry(&mut self, now: Instant) {
         self.invalidate();
         self.retry_at = Some(now + RETRY);
@@ -78,13 +89,18 @@ impl Scheduler {
 
     pub(crate) fn surface_occluded(&mut self) {
         self.surface_occluded = true;
+        self.effect_at = None;
         self.blink_at = None;
         self.cursor_hidden = false;
         self.invalidate();
     }
 
     pub(crate) fn deadline(&self) -> Option<Instant> {
-        self.blink_at.into_iter().chain(self.retry_at).min()
+        self.blink_at
+            .into_iter()
+            .chain(self.retry_at)
+            .chain(self.effect_at)
+            .min()
     }
 }
 

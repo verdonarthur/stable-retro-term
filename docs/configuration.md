@@ -1,7 +1,7 @@
 # Configuration
 
 retro-term reads one TOML file. [`assets/config.example.toml`](../assets/config.example.toml)
-lists every key at its default value.
+shows a starting configuration.
 
 ## File location
 
@@ -18,11 +18,30 @@ Built-in defaults, then the selected preset, then the file, then the command lin
 New panes and tabs start `shell.program` with `shell.args`, or your login shell.
 Command-line values stay active after a reload.
 
+## Profiles
+
+The built-in profiles are `static-crt` (default), `plain`, `animated-crt`,
+`default-amber`, `monochrome-green`, `deep-blue`, `commodore-64`,
+`commodore-pet`, `apple-ii`, `atari-400`, `ibm-vga-8x16`,
+`ibm-3278-reborn`, `neon-cyan`, `ghost-terminal`, `plasma`, `boring`, and `e-ink`. The retro profiles
+set phosphor colors and effect levels. Choose a profile in Quick Settings
+under General, or set `preset` in the file. The profile files are in
+[`assets/presets/`](../assets/presets/).
+
+## CRT controls
+
+Adjust the levels in Quick Settings or under `[effects.levels]`. Each level
+is an integer from 0 to 100. The effects include bloom, burn-in, static noise,
+jitter, a glow line, screen curvature, ambient light, flicker, horizontal sync,
+RGB shift, and frame shininess. The panel also sets scanlines, phosphor color,
+screen brightness, contrast, margin, corner radius, and frame size.
+Set an individual animation or glow effect to 0 to turn it off.
+
 ## Keys
 
 | Key | Type | Default | Range |
 | --- | --- | --- | --- |
-| `preset` | string | `"static-crt"` | `"static-crt"`, `"plain"`, `"animated-crt"` |
+| `preset` | string | `"static-crt"` | See [profiles](#profiles) |
 | `effects.crt` | bool | `true` | `false` draws without CRT effects |
 | `effects.animation` | bool | `false` | `true` adds CRT flicker; needs `effects.crt`. Experimental; performance unverified |
 | `font.family` | string | `""` | An installed family; `""` selects the system monospace font |
@@ -35,18 +54,9 @@ Command-line values stay active after a reload.
 
 Unknown keys are errors.
 
-## Presets
-
-- `static-crt`: the default look with static CRT effects.
-- `plain`: no CRT effects.
-- `animated-crt`: static CRT effects plus flicker on frames that retro-term draws anyway.
-  Experimental; performance unverified.
-
-The preset files are in [`assets/presets/`](../assets/presets/). Keys in your file override the preset.
-
 ## Reload
 
-Press Ctrl+Shift+R to read the file again. Press Ctrl+Shift+P to open the [settings panel](#settings-panel).
+Press Ctrl+Shift+R to read the file again. Press Ctrl+Shift+S to open the [settings panel](#settings-panel).
 
 - Applies to the open window: `preset`, the `effects` keys, and the `font` keys. A font change resizes the grid and the shell.
 - Applies to new panes and tabs only: the `terminal` and `shell` keys. retro-term shows a message when they change.
@@ -61,8 +71,8 @@ If the file is invalid at startup, retro-term starts with the defaults and shows
 
 ## Settings panel
 
-Ctrl+Shift+P opens a panel that edits these keys: `preset`, `effects.crt`, `font.size`,
-`font.line_height`, and `terminal.scrollback_lines` (steps of 1000). The keys are in [usage](usage.md#settings-panel).
+Ctrl+Shift+S opens Quick Settings. Use Tab to switch categories and the arrow
+keys to select and change a value. Press Enter to save and apply changes.
 
 - The rows show the result of the [precedence](#precedence) rules. For example, with `effects.crt = true`
   in the file, the `plain` preset still shows CRT effects on.
@@ -70,20 +80,20 @@ Ctrl+Shift+P opens a panel that edits these keys: `preset`, `effects.crt`, `font
   `font.line_height`; the panel tells you to change the other row first.
 - With `--plain`, the CRT row shows `off (--plain; file: on)`. A change still goes to the file and applies
   when you start without `--plain`.
-- Changes show only in the panel. Enter saves and then reloads the file, the same as Ctrl+Shift+R.
-  Enter with no change closes the panel and writes nothing.
-- Saving changes only the edited values. Comments, key order, formatting, and other keys stay.
-  A missing key is added to its table; a missing table is added at the end; a missing file and its
-  directory are created with only the changed keys.
-- The file is written to a temporary file in the same directory and then renamed over the old file.
-  The file permissions stay. If the path is a symbolic link, the target file is written and the link stays.
-  On any error the old file does not change and the panel shows the error.
-- If the file changed on disk after the panel opened, the panel does not save. Close the panel, press
-  Ctrl+Shift+R, and open it again. A change in the short time between this check and the rename is not detected.
+- Changes preview after a 150 ms pause. Enter applies pending changes, saves,
+  and keeps Quick Settings open.
+  Escape restores the last saved appearance.
+- Choosing a profile replaces the font and CRT overrides. Editing its appearance
+  displays Custom and keeps the chosen profile as the base for settings that
+  still inherit their values. Shell and scrollback preferences remain independent.
+- Profiles map the supported settings from
+  [Cool Retro Term](https://github.com/Swordfish90/cool-retro-term/blob/master/app/qml/ApplicationSettings.qml).
+  They use system fonts and this renderer's scanline model. Native window opacity,
+  font width, and the upstream rasterization modes are outside this mapping.
+- Saving checks whether the file changed since it was opened or last saved.
+
 - If the file is invalid or cannot be read, or there is no configuration path, the panel is read-only and
   shows the reason. Fix the file, then press Ctrl+Shift+R.
-- If the reload after a save fails (for example, the font family is not installed), the file stays saved and
-  retro-term keeps the running configuration and shows the error, the same as Ctrl+Shift+R.
 - `font.family` and the `shell` keys are not in the panel. Edit the file for them.
 - The panel does not open in a window that is too small for it. If the window becomes too small, the panel
   closes without saving.

@@ -2,7 +2,9 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use retro_renderer::scene::{Cluster, Glyph, Rect, Rgb, Scene};
-use retro_renderer::{FLICKER_GAINS, Fonts, GridRenderer, RenderMode, flicker_gain};
+use retro_renderer::{
+    CRT_CONTROLS, CrtLevels, FLICKER_GAINS, Fonts, GridRenderer, RenderMode, flicker_gain,
+};
 use wgpu::{
     BufferDescriptor, BufferUsages, Extent3d, Instance, MapMode, PollType, TexelCopyBufferInfo,
     TexelCopyBufferLayout, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
@@ -160,6 +162,42 @@ fn fixed_grid_readback() {
         .display_point([156.0, 70.0], resized)
         .map(|value| value as u32);
     assert!(at(&rendered, resized, x, y).2 > 155);
+
+    let levels = CrtLevels(CRT_CONTROLS.map(|(key, _, default)| match key {
+        "burn_in" => 90,
+        "green" | "blue" => 0,
+        _ => default,
+    }));
+    let mut custom = GridRenderer::with_mode(
+        &device,
+        &queue,
+        FORMAT,
+        fonts(),
+        RenderMode::CustomCrt(levels, false),
+    );
+    let mut white = Scene::new(Rgb(255, 255, 255), 24, 32);
+    let center = |frame: &[u8]| at(frame, SIZE, 64, 32);
+    let bright = center(&readback(&device, &queue, &mut custom, SIZE, &white));
+    assert!(bright.0 > 200);
+    assert_eq!((bright.1, bright.2), (0, 0));
+    white.clear = Rgb(0, 0, 0);
+    let trail = center(&readback(&device, &queue, &mut custom, SIZE, &white));
+    let faded = center(&readback(&device, &queue, &mut custom, SIZE, &white));
+    assert!(faded.0 > 0 && faded.0 < trail.0 && trail.0 < bright.0);
+
+    let levels = CrtLevels(CRT_CONTROLS.map(|(key, _, default)| match key {
+        "margin" | "frame_size" | "radius" => 100,
+        _ => default,
+    }));
+    let mode = RenderMode::CustomCrt(levels, false);
+    let mut framed = GridRenderer::with_mode(&device, &queue, FORMAT, fonts(), mode);
+    white.clear = Rgb(255, 255, 255);
+    let rendered = readback(&device, &queue, &mut framed, SIZE, &white);
+    for point in [[3.0, 3.0], [125.0, 3.0], [3.0, 61.0], [125.0, 61.0]] {
+        let [x, y] = mode.display_point(point, SIZE);
+        assert!(at(&rendered, SIZE, x as u32, y as u32).0 > 200);
+    }
+    assert!(at(&rendered, SIZE, 0, 0).0 < 100);
 }
 
 fn at(rendered: &[u8], size: [u32; 2], x: u32, y: u32) -> Rgb {

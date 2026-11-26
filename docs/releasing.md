@@ -32,7 +32,7 @@ The `publish` job is the only job with `contents: write`. It does not check out 
 | `ci.yml` `package` job | Active on pull requests | Nothing |
 | `release-please.yml` | Inactive | `RETRO_RELEASE_ENABLED = true`, the GitHub App |
 | `release.yml` | Runs only when called or dispatched | GPU runner, `RETRO_GPU_LABEL` |
-| `benchmarks/release-gate.toml` | Limit 6/5 (1.20); presets `static-crt`, `plain` | Final preset list (Task 07/09) |
+| `benchmarks/release-gate.toml` | Limit 6/5 (1.20); presets `static-crt`, `plain` | Additional profiles pending measurement |
 
 ## External setup checklist
 

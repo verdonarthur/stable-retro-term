@@ -15,6 +15,8 @@ pub enum Key {
     Right,
     Enter,
     Escape,
+    NextCategory,
+    BrowseProfiles,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,6 +82,36 @@ const ROWS: &[Row] = &[
         overridden: |_| None,
     },
 ];
+
+const ANIMATION: Row = Row {
+    label: "Legacy flicker",
+    key: "effects.animation",
+    value: |config| on_off(config.effects.animation),
+    change: |config, _| Change::Set((!config.effects.animation).into()),
+    overridden: |overrides| overrides.plain.then_some("--plain"),
+};
+
+const CONTROLS: &[(&str, &str, u8)] = &retro_renderer::CRT_CONTROLS;
+const FIRST_CONTROL: usize = ROWS.len() + 1;
+const ROW_COUNT: usize = FIRST_CONTROL + CONTROLS.len();
+
+fn category(row: usize) -> &'static str {
+    match row {
+        0 | 21..=25 | 30..=32 => "General",
+        2..=3 | 18..=20 | 26..=29 | 33 => "Terminal",
+        4 => "Advanced",
+        _ => "Effects",
+    }
+}
+
+fn level(config: &Config, key: &str, default: u8) -> u8 {
+    config.effects.levels.get(key).copied().unwrap_or(default)
+}
+
+fn row(index: usize) -> Option<&'static Row> {
+    ROWS.get(index)
+        .or_else(|| (index == ROWS.len()).then_some(&ANIMATION))
+}
 
 const LABEL_WIDTH: usize = 25;
 const SCROLLBACK_STEP: i64 = 1000;
@@ -205,6 +237,7 @@ pub struct Settings {
     editor: Option<Editor>,
     preview: Config,
     selected: usize,
+    profile_cursor: Option<usize>,
     status: String,
 }
 
@@ -236,6 +269,7 @@ impl Settings {
             editor,
             preview,
             selected: 0,
+            profile_cursor: None,
             status,
         }
     }
@@ -256,21 +290,57 @@ impl Settings {
                 Outcome::Nothing
             };
         };
+        if let Some(index) = self.profile_cursor {
+            self.profile_cursor = match key {
+                Key::Up => Some((index + PRESETS.len() - 1) % PRESETS.len()),
+                Key::Down => Some((index + 1) % PRESETS.len()),
+                Key::Enter | Key::Escape | Key::BrowseProfiles => None,
+                _ => return Outcome::Nothing,
+            };
+            if key == Key::Enter {
+                self.apply("preset", Change::Set(PRESETS[index].0.into()));
+            }
+            return Outcome::Redraw;
+        }
+        if matches!(key, Key::Up | Key::Down) {
+            let group = category(self.selected);
+            let next = if key == Key::Up {
+                (0..self.selected)
+                    .rev()
+                    .find(|&index| category(index) == group)
+            } else {
+                (self.selected + 1..ROW_COUNT).find(|&index| category(index) == group)
+            };
+            return if let Some(index) = next {
+                self.selected = index;
+                Outcome::Redraw
+            } else {
+                Outcome::Nothing
+            };
+        }
         let direction = match key {
             Key::Escape => return Outcome::Close,
-            Key::Up if self.selected > 0 => {
-                self.selected -= 1;
+            Key::Up | Key::Down => unreachable!("navigation handled above"),
+            Key::NextCategory => {
+                self.selected = match category(self.selected) {
+                    "General" => 2,
+                    "Terminal" => 1,
+                    "Effects" => 4,
+                    _ => 0,
+                };
                 return Outcome::Redraw;
             }
-            Key::Down if self.selected + 1 < ROWS.len() => {
-                self.selected += 1;
+            Key::BrowseProfiles if self.selected == 0 => {
+                self.profile_cursor = PRESETS
+                    .iter()
+                    .position(|(name, _)| *name == self.preview.preset);
                 return Outcome::Redraw;
             }
-            Key::Up | Key::Down => return Outcome::Nothing,
+            Key::BrowseProfiles => return Outcome::Nothing,
             Key::Enter => {
                 let text = editor.document.to_string();
                 return if text == self.original.as_deref().unwrap_or("") {
-                    Outcome::Close
+                    Outcome::Nothing
                 } else {
                     Outcome::Save(text)
                 };
@@ -278,12 +348,35 @@ impl Settings {
             Key::Left => -1,
             Key::Right => 1,
         };
-        let row = &ROWS[self.selected];
-        let status = match (row.change)(&editor.file, direction) {
+        let (key, change) = if let Some(row) = row(self.selected) {
+            (row.key.to_owned(), (row.change)(&editor.file, direction))
+        } else {
+            let (key, _, default) = CONTROLS[self.selected - FIRST_CONTROL];
+            let current = i64::from(level(&editor.file, key, default));
+            let next = (current + direction * 5).clamp(0, 100);
+            let change = if next == current {
+                Change::Stop(None)
+            } else {
+                Change::Set(next.into())
+            };
+            (format!("effects.levels.{key}"), change)
+        };
+        self.apply(&key, change)
+    }
+
+    fn apply(&mut self, key: &str, change: Change) -> Outcome {
+        let Some(editor) = &mut self.editor else {
+            return Outcome::Nothing;
+        };
+        let status = match change {
             Change::Stop(hint) => hint.unwrap_or_default(),
             Change::Set(value) => {
                 let mut document = editor.document.clone();
-                let text = set(&mut document, row.key, value).map(|()| document.to_string());
+                if key == "preset" {
+                    document.remove("font");
+                    document.remove("effects");
+                }
+                let text = set(&mut document, key, value).map(|()| document.to_string());
                 match text.and_then(|text| {
                     Ok((
                         resolve(&text, &self.overrides)?,
@@ -313,6 +406,24 @@ impl Settings {
         self.original.as_deref()
     }
 
+    pub fn mark_saved(&mut self, text: String) {
+        self.original = Some(text);
+        self.status = "Saved".into();
+    }
+
+    fn profile_label(&self) -> String {
+        let Some(editor) = &self.editor else {
+            return self.preview.preset.clone();
+        };
+        let base = format!("preset = {:?}", editor.file.preset);
+        match file_config(&base, &self.overrides) {
+            Ok(base) if base.font == editor.file.font && base.effects == editor.file.effects => {
+                editor.file.preset.clone()
+            }
+            _ => "custom".into(),
+        }
+    }
+
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
@@ -331,16 +442,54 @@ impl Settings {
 
     /// The panel text, one entry per line, with the selected row marked.
     pub fn lines(&self) -> Vec<(String, bool)> {
+        if let Some(index) = self.profile_cursor {
+            const PAGE_SIZE: usize = 6;
+            let start = index / PAGE_SIZE * PAGE_SIZE;
+            let mut lines = vec![(format!(" Profiles  {}/{}", index + 1, PRESETS.len()), false)];
+            lines.extend(
+                PRESETS
+                    .iter()
+                    .enumerate()
+                    .skip(start)
+                    .take(PAGE_SIZE)
+                    .map(|(row, (name, _))| (format!(" {name}"), row == index)),
+            );
+            lines.push((" Up/Down select  Enter choose  Esc back".into(), false));
+            return lines;
+        }
         let line = |text: String| (text, false);
         let field = |label: &str, value: String| format!(" {label:<LABEL_WIDTH$} {value} ");
         let mut lines = vec![line(" Settings".into()), line(String::new())];
         if let Some(editor) = &self.editor {
-            for (index, row) in ROWS.iter().enumerate() {
-                let mut value = (row.value)(&self.preview);
-                if let Some(option) = (row.overridden)(&self.overrides) {
-                    value = format!("{value} ({option}; file: {})", (row.value)(&editor.file));
-                }
-                lines.push((field(row.label, value), index == self.selected));
+            let group = category(self.selected);
+            lines.push(line(format!(" {group}  [Tab switches category]")));
+            if self.selected == 0 {
+                lines.push(line(" Space opens the profile list.".into()));
+            }
+            let matching: Vec<_> = (0..ROW_COUNT)
+                .filter(|&index| category(index) == group)
+                .collect();
+            let selected = matching
+                .iter()
+                .position(|&index| index == self.selected)
+                .unwrap_or(0);
+            let page = selected / 6 * 6;
+            for &index in matching.iter().skip(page).take(6) {
+                let (label, value) = if let Some(row) = row(index) {
+                    let mut value = if row.key == "preset" {
+                        self.profile_label()
+                    } else {
+                        (row.value)(&self.preview)
+                    };
+                    if let Some(option) = (row.overridden)(&self.overrides) {
+                        value = format!("{value} ({option}; file: {})", (row.value)(&editor.file));
+                    }
+                    (row.label, value)
+                } else {
+                    let (key, label, default) = CONTROLS[index - FIRST_CONTROL];
+                    (label, format!("{}%", level(&self.preview, key, default)))
+                };
+                lines.push((field(label, value), index == self.selected));
             }
             lines.push(line(String::new()));
         }

@@ -6,3 +6,5 @@
 # Tracked despite global ignore rules
 !/AGENTS.md
 !/CLAUDE.md
+
+/.claude/plans/
