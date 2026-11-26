@@ -30,7 +30,7 @@ The `publish` job is the only job with `contents: write`. It does not check out 
 | Release Please config, manifest, `CHANGELOG.md` | Prepared | `bootstrap-sha` when this lands on `main` |
 | `dist-workspace.toml`, `[profile.dist]` | Prepared | Nothing |
 | `ci.yml` `package` job | Active on pull requests | Nothing |
-| `release-please.yml` | Inactive | `RETRO_RELEASE_ENABLED = true`, the GitHub App |
+| `release-please.yml` | Inactive | `RETRO_RELEASE_ENABLED = true` and the `RELEASE_TOKEN` secret |
 | `release.yml` | Runs only when called or dispatched | GPU runner, `RETRO_GPU_LABEL` |
 | `benchmarks/release-gate.toml` | Limit 6/5 (1.20); presets `static-crt`, `plain` | Additional profiles pending measurement |
 
@@ -38,13 +38,15 @@ The `publish` job is the only job with `contents: write`. It does not check out 
 
 Do these in GitHub. The repository holds no credentials.
 
-- [ ] Create a GitHub App for releases. Install it on this repository only, with Contents and Pull requests write.
-- [ ] Repository variable `RELEASE_APP_CLIENT_ID` (the App client ID) and secret `RELEASE_APP_PRIVATE_KEY`.
+- [ ] Store a GitHub access token as the repository Actions secret `RELEASE_TOKEN`.
+      A fine-grained personal access token needs access to this repository with Contents and Pull requests set to
+      Read and write. An OAuth user token needs a scope that grants write access to this repository, such as
+      `public_repo` for a public repository or `repo` for a private one. The token acts as its user.
 - [ ] Self-hosted GPU runner with a unique label, Alacritty 0.17.0, and the prerequisites in
       [performance](performance.md). Set repository variable `RETRO_GPU_LABEL` to that label.
 - [ ] Branch protection on `main`, so that `github.ref_protected` is true. Required checks: `check`, `deny`, `package`.
 - [ ] Squash merges only. PR titles follow Conventional Commits (`feat:`, `fix:`, `perf:`); they drive the changelog.
-- [ ] Tag ruleset: only the release App can create, update, or delete `v*` tags.
+- [ ] Tag ruleset: allow the release token's user to create `v*` tags and protect the tags from updates and deletions.
 - [ ] Add `bootstrap-sha` to `release-please-config.json` (the commit that lands this setup on `main`).
 - [ ] Rehearse: run `release.yml` by hand with `dry_run: true` on a test tag.
 - [ ] Set repository variable `RETRO_RELEASE_ENABLED` to `true`.
