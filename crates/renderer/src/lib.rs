@@ -2,7 +2,7 @@
 
 mod effects;
 pub mod scene;
-pub use effects::{FLICKER_GAINS, RenderMode, flicker_gain};
+pub use effects::{CRT_CONTROLS, CrtLevels, FLICKER_GAINS, RenderMode, flicker_gain};
 mod text;
 
 use std::error::Error;
@@ -80,8 +80,7 @@ impl GridRenderer {
             pipeline,
             fills: fill_buffer(device, FILL_STRIDE),
             fill_bytes: Vec::new(),
-            crt: (mode != RenderMode::Plain)
-                .then(|| effects::Crt::new(device, format, mode == RenderMode::AnimatedCrt)),
+            crt: (mode != RenderMode::Plain).then(|| effects::Crt::new(device, format, mode)),
             animation_frame: 0,
             format,
         }
@@ -160,7 +159,7 @@ impl GridRenderer {
             }
             self.text.draw(&mut pass)?;
         }
-        if let Some(crt) = &self.crt {
+        if let Some(crt) = &mut self.crt {
             crt.draw(&mut commands, view);
         }
         let submission = queue.submit([commands.finish()]);

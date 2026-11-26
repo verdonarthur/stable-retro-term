@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_PRESET: &str = "static-crt";
-pub const PRESETS: [(&str, &str); 3] = [
+pub const PRESETS: [(&str, &str); 17] = [
     (
         "static-crt",
         include_str!("../../../assets/presets/static-crt.toml"),
@@ -19,6 +19,59 @@ pub const PRESETS: [(&str, &str); 3] = [
         "animated-crt",
         include_str!("../../../assets/presets/animated-crt.toml"),
     ),
+    (
+        "default-amber",
+        include_str!("../../../assets/presets/default-amber.toml"),
+    ),
+    (
+        "monochrome-green",
+        include_str!("../../../assets/presets/monochrome-green.toml"),
+    ),
+    (
+        "deep-blue",
+        include_str!("../../../assets/presets/deep-blue.toml"),
+    ),
+    (
+        "commodore-64",
+        include_str!("../../../assets/presets/commodore-64.toml"),
+    ),
+    (
+        "commodore-pet",
+        include_str!("../../../assets/presets/commodore-pet.toml"),
+    ),
+    (
+        "apple-ii",
+        include_str!("../../../assets/presets/apple-ii.toml"),
+    ),
+    (
+        "atari-400",
+        include_str!("../../../assets/presets/atari-400.toml"),
+    ),
+    (
+        "ibm-vga-8x16",
+        include_str!("../../../assets/presets/ibm-vga-8x16.toml"),
+    ),
+    (
+        "ibm-3278-reborn",
+        include_str!("../../../assets/presets/ibm-3278-reborn.toml"),
+    ),
+    (
+        "neon-cyan",
+        include_str!("../../../assets/presets/neon-cyan.toml"),
+    ),
+    (
+        "ghost-terminal",
+        include_str!("../../../assets/presets/ghost-terminal.toml"),
+    ),
+    (
+        "plasma",
+        include_str!("../../../assets/presets/plasma.toml"),
+    ),
+    (
+        "boring",
+        include_str!("../../../assets/presets/boring.toml"),
+    ),
+    ("e-ink", include_str!("../../../assets/presets/e-ink.toml")),
 ];
 
 pub const FONT_SIZE: std::ops::RangeInclusive<u16> = 6..=72;
@@ -41,6 +94,7 @@ pub struct Effects {
     pub crt: bool,
     /// Experimental CRT flicker. Needs `crt`.
     pub animation: bool,
+    pub levels: std::collections::BTreeMap<String, u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +131,7 @@ impl Default for Config {
             effects: Effects {
                 crt: true,
                 animation: false,
+                levels: Default::default(),
             },
             font: Font {
                 family: String::new(),
@@ -111,6 +166,8 @@ pub struct Layer {
 pub struct EffectsLayer {
     pub crt: Option<bool>,
     pub animation: Option<bool>,
+    #[serde(default)]
+    pub levels: std::collections::BTreeMap<String, u8>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -148,6 +205,7 @@ impl Layer {
         }
         set(&mut config.effects.crt, self.effects.crt);
         set(&mut config.effects.animation, self.effects.animation);
+        config.effects.levels.extend(self.effects.levels);
         set(&mut config.font.family, self.font.family);
         set(&mut config.font.size, self.font.size);
         set(&mut config.font.line_height, self.font.line_height);
@@ -195,6 +253,18 @@ impl Config {
 
     fn validate(&self) -> Result<(), ConfigError> {
         let range = |key, message: String| Err(ConfigError::Range { key, message });
+        for (key, &value) in &self.effects.levels {
+            if value > 100
+                || !retro_renderer::CRT_CONTROLS
+                    .iter()
+                    .any(|&(name, _, _)| name == key)
+            {
+                return range(
+                    "effects.levels",
+                    format!("{key} must be a supported control in 0..=100"),
+                );
+            }
+        }
         let font = &self.font;
         if !FONT_SIZE.contains(&font.size) {
             return range(

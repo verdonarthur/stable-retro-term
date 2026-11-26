@@ -1,13 +1,13 @@
 # Performance baseline
 
-Task 06 applies the 1.40× Alacritty ceiling to emulator CPU time, steady and
+The development gate applies the 1.40× Alacritty ceiling to emulator CPU time, steady and
 peak RSS, and attributable GPU engine time in each scenario. Measure default
 static CRT and the plain bypass separately. The suite also checks that
 expected output becomes visible before its deadline.
 
 ## Measurement host
 
-Use the Task 04 AMD Radeon 890M machine and its native KDE Wayland session. Use
+Use the AMD Radeon 890M machine and its native KDE Wayland session. Use
 a dedicated, unscaled SDR output with a fixed refresh rate, US keyboard layout,
 default KDE window gestures, and both windows fully visible. Close unrelated
 windows and avoid interacting with the session during measurements.
@@ -75,7 +75,7 @@ The report records the candidate mode. Static CRT capture checks account for
 the projected grid, tint, and scanline phases. Plain and Alacritty capture
 checks use the rectangular grid and original colors. Compare each report to
 the Alacritty measurements from its own run and to the comparable results
-in the accepted [Task 05 baseline](decisions/05-renderer-baseline.md). Keep
+in the accepted [plain renderer baseline](decisions/05-renderer-baseline.md). Keep
 any metric with missing measurements or unresolved uncertainty open.
 
 The JSON report retains raw samples for each terminal as well as the fixture's
@@ -118,7 +118,7 @@ the current result.
 
 ## Multi-session scenarios (planned; harness not implemented)
 
-Task 08 defines these scenarios. The harness accepts only the 8 single-pane scenarios
+The harness accepts only the 8 single-pane scenarios
 today. One tab with one pane renders the same scene as before tabs, so the
 single-pane suite stays valid.
 

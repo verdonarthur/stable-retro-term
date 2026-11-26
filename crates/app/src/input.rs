@@ -10,6 +10,9 @@ pub(crate) enum Action {
     Paste,
     ReloadConfig,
     Settings,
+    Panel,
+    Shortcuts,
+    CyclePane(bool),
     NewTab,
     ClosePane,
     NextTab,
@@ -49,6 +52,9 @@ pub(crate) fn key(
             return Some(Action::ReloadConfig);
         }
         if character.eq_ignore_ascii_case("p") {
+            return Some(Action::Panel);
+        }
+        if character.eq_ignore_ascii_case("s") {
             return Some(Action::Settings);
         }
         if character.eq_ignore_ascii_case("t") {
@@ -108,10 +114,12 @@ pub(crate) fn key(
     Some(Action::Bytes(bytes))
 }
 
-/// Keys of the open settings panel. Ctrl+Shift+P closes it like Escape.
+/// Keys of the open settings panel. Ctrl+Shift+S closes it like Escape.
 pub(crate) fn settings_key(key: Key<&str>, modifiers: ModifiersState) -> Option<settings::Key> {
     use settings::Key as Panel;
     match key {
+        Key::Named(NamedKey::Tab) => Some(Panel::NextCategory),
+        Key::Named(NamedKey::Space) => Some(Panel::BrowseProfiles),
         Key::Named(NamedKey::ArrowUp) => Some(Panel::Up),
         Key::Named(NamedKey::ArrowDown) => Some(Panel::Down),
         Key::Named(NamedKey::ArrowLeft) => Some(Panel::Left),
@@ -121,7 +129,7 @@ pub(crate) fn settings_key(key: Key<&str>, modifiers: ModifiersState) -> Option<
         Key::Character(character)
             if modifiers.control_key()
                 && modifiers.shift_key()
-                && character.eq_ignore_ascii_case("p") =>
+                && character.eq_ignore_ascii_case("s") =>
         {
             Some(Panel::Escape)
         }
@@ -129,7 +137,7 @@ pub(crate) fn settings_key(key: Key<&str>, modifiers: ModifiersState) -> Option<
     }
 }
 
-/// Ctrl+PageDown/PageUp switch tabs, Alt+Arrow moves focus, Ctrl+Shift+Arrow resizes.
+/// Window shortcuts for moving between tabs and panes or resizing a split.
 fn layout_action(key: NamedKey, ctrl: bool, shift: bool, alt: bool) -> Option<Action> {
     use NamedKey::*;
     let direction = match key {
@@ -140,8 +148,12 @@ fn layout_action(key: NamedKey, ctrl: bool, shift: bool, alt: bool) -> Option<Ac
         _ => None,
     };
     match (ctrl, shift, alt) {
-        (true, false, false) if key == PageDown => Some(Action::NextTab),
+        (true, false, false) if matches!(key, PageDown | Tab) => Some(Action::NextTab),
         (true, false, false) if key == PageUp => Some(Action::PreviousTab),
+        (true, true, false) if key == Tab => Some(Action::PreviousTab),
+        (false, false, true) if matches!(key, PageDown | PageUp) => {
+            Some(Action::CyclePane(key == PageDown))
+        }
         (false, false, true) => direction.map(Action::Focus),
         (true, true, false) => direction.map(Action::Resize),
         _ => None,
@@ -303,6 +315,13 @@ mod tests {
             Some(Action::Split(Axis::Columns))
         );
         assert_eq!(character("O", ctrl_shift), Some(Action::Split(Axis::Rows)));
+        assert_eq!(named(NamedKey::Tab, ctrl), Some(Action::NextTab));
+        assert_eq!(named(NamedKey::Tab, ctrl_shift), Some(Action::PreviousTab));
+        assert_eq!(
+            named(NamedKey::PageDown, alt),
+            Some(Action::CyclePane(true))
+        );
+        assert_eq!(named(NamedKey::PageUp, alt), Some(Action::CyclePane(false)));
         assert_eq!(named(NamedKey::PageDown, ctrl), Some(Action::NextTab));
         assert_eq!(named(NamedKey::PageUp, ctrl), Some(Action::PreviousTab));
         for (arrow, direction) in [
@@ -347,6 +366,16 @@ mod tests {
         let ctrl_shift = ctrl | ModifiersState::SHIFT;
         assert_eq!(
             key(Key::Character("P"), None, code, ctrl_shift, modes),
+            Some(Action::Panel)
+        );
+        assert_eq!(
+            key(
+                Key::Character("S"),
+                None,
+                PhysicalKey::Code(KeyCode::KeyS),
+                ctrl_shift,
+                modes
+            ),
             Some(Action::Settings)
         );
         assert_eq!(
@@ -365,10 +394,10 @@ mod tests {
             assert_eq!(settings_key(Key::Named(named), none), Some(expected));
         }
         assert_eq!(
-            settings_key(Key::Character("P"), ctrl_shift),
+            settings_key(Key::Character("S"), ctrl_shift),
             Some(settings::Key::Escape)
         );
-        assert_eq!(settings_key(Key::Character("p"), none), None);
+        assert_eq!(settings_key(Key::Character("s"), none), None);
         assert_eq!(settings_key(Key::Character("q"), ctrl_shift), None);
     }
 

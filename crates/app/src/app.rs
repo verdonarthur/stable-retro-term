@@ -5,7 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use retro_renderer::{FontError, Frame, RenderMode, SurfaceRenderer};
 use retro_terminal::{
@@ -135,6 +135,10 @@ struct State {
     animation_frame: u32,
     /// The open settings panel. It takes every key while open.
     settings: Option<Settings>,
+    saved_settings_config: Option<Config>,
+    settings_deadline: Option<Instant>,
+    shortcuts_open: bool,
+    menu: Option<(usize, Option<[f64; 2]>)>,
 }
 
 impl State {
@@ -215,6 +219,10 @@ impl State {
             previous_ime_cursor: None,
             animation_frame: 0,
             settings: None,
+            saved_settings_config: None,
+            settings_deadline: None,
+            shortcuts_open: false,
+            menu: None,
         };
         state.insert(pane, session, grid);
         if let Some(error) = startup_error {
@@ -240,13 +248,11 @@ impl State {
             .set_presentable(grid.is_some() && !self.occluded);
         if grid.is_none() {
             self.renderer.resize([0, 0])?;
-            self.close_settings_if_too_small();
             return Ok(());
         }
         self.renderer.resize(size.into())?;
         self.cell = (cell_width, line_height);
         self.font_size = font_size;
-        self.close_settings_if_too_small();
         self.layout_panes()
     }
 
@@ -260,11 +266,6 @@ impl State {
         }
     }
 
-    fn settings_fit(&self, settings: &Settings) -> bool {
-        let cell = [u32::from(self.cell.0), u32::from(self.cell.1)];
-        ui::settings_box(self.window_rect(), &settings.lines(), cell).is_some()
-    }
-
     fn open_settings(&mut self) {
         let path = self.source.path().map(Path::to_path_buf);
         let overrides = self.overrides.clone();
@@ -275,11 +276,8 @@ impl State {
             Some(Ok(text)) => Settings::open(path, Some(text), overrides),
             _ => Settings::open(path, None, overrides),
         };
-        if !self.settings_fit(&settings) {
-            self.show("window too small for settings".into());
-            return;
-        }
         self.window.set_ime_allowed(false);
+        self.saved_settings_config = Some(self.config.clone());
         self.settings = Some(settings);
         self.scheduler.invalidate();
     }
@@ -291,24 +289,36 @@ impl State {
         }
     }
 
-    fn close_settings_if_too_small(&mut self) {
-        if self
-            .settings
-            .as_ref()
-            .is_some_and(|settings| !self.settings_fit(settings))
-        {
-            self.close_settings();
-            self.show("window too small for settings; closed without saving".into());
-        }
-    }
-
     /// Saves, then applies the file through `reload`, the same as Ctrl+Shift+R.
     fn settings_outcome(&mut self, outcome: Outcome) -> AppResult<()> {
         match outcome {
             Outcome::Nothing => {}
             Outcome::Redraw => self.scheduler.invalidate(),
-            Outcome::Close => self.close_settings(),
+            Outcome::Close => {
+                self.settings_deadline = None;
+                self.close_settings();
+                if let Some(saved) = self.saved_settings_config.take()
+                    && let Some(error) = self.apply_settings_config(saved)?
+                {
+                    self.show(error.to_string());
+                }
+            }
             Outcome::Save(text) => {
+                self.settings_deadline = None;
+                let Some(candidate) = self
+                    .settings
+                    .as_ref()
+                    .map(|settings| settings.preview().clone())
+                else {
+                    return Ok(());
+                };
+                if let Some(error) = self.apply_settings_config(candidate)? {
+                    if let Some(settings) = &mut self.settings {
+                        settings.set_status(error.to_string());
+                    }
+                    self.scheduler.invalidate();
+                    return Ok(());
+                }
                 let Some(settings) = &mut self.settings else {
                     return Ok(());
                 };
@@ -317,8 +327,9 @@ impl State {
                 };
                 match config::save(path, settings.original(), &text) {
                     Ok(()) => {
-                        self.close_settings();
-                        self.reload()?;
+                        settings.mark_saved(text);
+                        self.saved_settings_config = Some(self.config.clone());
+                        self.scheduler.invalidate();
                     }
                     Err(error) => {
                         eprintln!("retro-term: settings: {error}");
@@ -492,6 +503,47 @@ impl State {
         self.scheduler.invalidate();
     }
 
+    fn apply_pending_settings(&mut self, now: Instant) -> AppResult<()> {
+        if self
+            .settings_deadline
+            .is_some_and(|deadline| deadline <= now)
+        {
+            self.settings_deadline = None;
+            if let Some(candidate) = self
+                .settings
+                .as_ref()
+                .map(|settings| settings.preview().clone())
+                && candidate != self.config
+                && let Some(error) = self.apply_settings_config(candidate)?
+                && let Some(settings) = &mut self.settings
+            {
+                settings.set_status(error.to_string());
+            }
+            self.scheduler.invalidate();
+        }
+        Ok(())
+    }
+
+    fn apply_settings_config(&mut self, candidate: Config) -> AppResult<Option<ConfigError>> {
+        let changes = Changes::between(&self.config, &candidate);
+        if changes.renderer
+            && self
+                .renderer
+                .reconfigure(render_mode(&candidate), font_family(&candidate))
+                .is_err()
+        {
+            return Ok(Some(font_error(&candidate)));
+        }
+        self.config = candidate;
+        if changes.layout {
+            self.font_size = 0;
+            self.previous_ime_cursor = None;
+            self.selection_start = None;
+            self.resize(self.window.inner_size())?;
+        }
+        Ok(None)
+    }
+
     /// Applies a valid file. An invalid file keeps the running state and shows the error.
     fn reload(&mut self) -> AppResult<()> {
         let candidate = config::load(&self.source, &self.overrides).and_then(|candidate| {
@@ -567,6 +619,29 @@ impl State {
             Action::Paste => {}
             Action::ReloadConfig => self.reload()?,
             Action::Settings => self.open_settings(),
+            Action::Panel => {
+                self.shortcuts_open = false;
+                if self.menu.take().is_none() {
+                    self.open_menu(None);
+                }
+                self.scheduler.invalidate();
+            }
+            Action::Shortcuts => {
+                self.shortcuts_open = true;
+                self.menu = Some((0, None));
+                self.scheduler.invalidate();
+            }
+            Action::CyclePane(forward) => {
+                let layout = &mut self.tabs.active_mut().layout;
+                let panes = layout.panes();
+                if panes.len() > 1
+                    && let Some(index) = panes.iter().position(|&pane| pane == layout.focus())
+                {
+                    let offset = if forward { 1 } else { panes.len() - 1 };
+                    layout.set_focus(panes[(index + offset) % panes.len()]);
+                    self.activate();
+                }
+            }
             Action::NewTab => {
                 let previous = self.tabs.active_index();
                 let pane = self.tabs.open();
@@ -642,6 +717,113 @@ impl State {
             pane.grid,
             clamp,
         )
+    }
+
+    fn menu_actions(context: bool) -> Vec<(&'static str, &'static str, Action)> {
+        use crate::layout::Axis;
+        let mut actions = vec![
+            ("New tab", "Ctrl+Shift+T", Action::NewTab),
+            (
+                "Split side by side",
+                "Ctrl+Shift+E",
+                Action::Split(Axis::Columns),
+            ),
+            (
+                "Split top and bottom",
+                "Ctrl+Shift+O",
+                Action::Split(Axis::Rows),
+            ),
+            ("Quick Settings", "Ctrl+Shift+S", Action::Settings),
+            ("Keyboard shortcuts", "", Action::Shortcuts),
+        ];
+        if context {
+            actions.splice(
+                ..0,
+                [
+                    ("Copy", "Ctrl+Shift+C", Action::Copy),
+                    ("Paste", "Ctrl+Shift+V", Action::Paste),
+                ],
+            );
+        }
+        actions
+    }
+
+    fn menu_lines(selected: usize, context: bool) -> Vec<(String, bool)> {
+        Self::menu_actions(context)
+            .into_iter()
+            .enumerate()
+            .map(|(index, (label, keys, _))| (format!(" {label:<21} {keys}"), index == selected))
+            .collect()
+    }
+
+    fn shortcut_lines() -> Vec<(String, bool)> {
+        Self::menu_actions(true)
+            .into_iter()
+            .map(|(label, keys, _)| (label, keys))
+            .filter(|(_, keys)| !keys.is_empty())
+            .chain([
+                ("Action panel", "Ctrl+Shift+P"),
+                ("Reload config", "Ctrl+Shift+R"),
+                ("Close pane", "Ctrl+Shift+W"),
+                ("Next / previous tab", "Ctrl+Tab / Ctrl+Shift+Tab"),
+                ("Next / previous tab", "Ctrl+PageDown / Ctrl+PageUp"),
+                ("Next / previous pane", "Alt+PageDown / Alt+PageUp"),
+                ("Focus adjacent pane", "Alt+Arrow"),
+                ("Resize pane", "Ctrl+Shift+Arrow"),
+                ("Close shortcut list", "Esc"),
+            ])
+            .map(|(label, keys)| (format!(" {label:<21} {keys}"), false))
+            .collect()
+    }
+
+    fn open_menu(&mut self, anchor: Option<[f64; 2]>) {
+        self.selection_start = None;
+        self.shortcuts_open = false;
+        if self
+            .menu_box(&Self::menu_lines(0, anchor.is_some()), anchor)
+            .is_some()
+        {
+            self.menu = Some((0, anchor));
+        }
+        self.scheduler.invalidate();
+    }
+
+    fn menu_box(
+        &self,
+        lines: &[(String, bool)],
+        anchor: Option<[f64; 2]>,
+    ) -> Option<retro_renderer::scene::Rect> {
+        let cell = [u32::from(self.cell.0), u32::from(self.cell.1)];
+        let window = self.window_rect();
+        let mut panel = ui::settings_box(window, lines, cell)?;
+        if let Some([x, y]) = anchor {
+            panel.x = (x as u32).min(window.width.saturating_sub(panel.width));
+            panel.y = (y as u32).min(window.height.saturating_sub(panel.height));
+        }
+        Some(panel)
+    }
+
+    fn menu_click(&mut self) -> AppResult<bool> {
+        let Some((selected, anchor)) = self.menu.take() else {
+            return Ok(false);
+        };
+        self.scheduler.invalidate();
+        if std::mem::take(&mut self.shortcuts_open) {
+            return Ok(false);
+        }
+        let lines = Self::menu_lines(selected, anchor.is_some());
+        if let Some(panel) = self.menu_box(&lines, anchor)
+            && let Some([x, y]) = self.pointer_source()
+            && x >= f64::from(panel.x)
+            && x < f64::from(panel.x + panel.width)
+            && y >= f64::from(panel.y + u32::from(self.cell.1))
+            && let Some((_, _, action)) = Self::menu_actions(anchor.is_some())
+                .into_iter()
+                .nth(((y - f64::from(panel.y)) / f64::from(self.cell.1)) as usize - 1)
+        {
+            return self.action(action);
+        }
+        Ok(false)
     }
 
     fn press(&mut self) {
@@ -757,6 +939,24 @@ impl State {
             .draw(&scene, || self.window.pre_present_notify())?
         {
             Frame::Presented => {
+                let animated = matches!(self.renderer.mode(), RenderMode::CustomCrt(_, _))
+                    && [
+                        "burn_in",
+                        "static_noise",
+                        "jitter",
+                        "glow_line",
+                        "flicker",
+                        "horizontal_sync",
+                    ]
+                    .into_iter()
+                    .any(|key| {
+                        self.config
+                            .effects
+                            .levels
+                            .get(key)
+                            .is_some_and(|&value| value > 0)
+                    });
+                self.scheduler.schedule_effect(now, animated);
                 self.animation_frame = self.animation_frame.wrapping_add(1);
                 self.gpu_recovered = false;
                 if self.development {
@@ -857,7 +1057,24 @@ impl State {
         }
         if let Some(settings) = &self.settings {
             let cell = [u32::from(self.cell.0), u32::from(self.cell.1)];
-            ui::settings_panel(&mut scene, self.window_rect(), &settings.lines(), cell);
+            ui::full_panel(&mut scene, self.window_rect(), &settings.lines(), cell, 0);
+        }
+        if let Some((selected, anchor)) = self.menu {
+            let cell = [u32::from(self.cell.0), u32::from(self.cell.1)];
+            if self.shortcuts_open {
+                ui::full_panel(
+                    &mut scene,
+                    self.window_rect(),
+                    &Self::shortcut_lines(),
+                    cell,
+                    selected,
+                );
+            } else {
+                let lines = Self::menu_lines(selected, anchor.is_some());
+                if let Some(panel) = self.menu_box(&lines, anchor) {
+                    ui::settings_panel(&mut scene, panel, &lines, cell);
+                }
+            }
         }
         scene
     }
@@ -887,11 +1104,67 @@ impl State {
                     self.banner.clear();
                     self.scheduler.invalidate();
                 }
+                if let Some((selected, anchor)) = self.menu {
+                    if matches!(event.logical_key.as_ref(), winit::keyboard::Key::Character(key) if key.eq_ignore_ascii_case("p"))
+                        && self.modifiers.control_key()
+                        && self.modifiers.shift_key()
+                        && !self.modifiers.alt_key()
+                    {
+                        return self.action(Action::Panel);
+                    }
+                    if self.shortcuts_open {
+                        use winit::keyboard::{Key, NamedKey};
+                        let limit = ui::full_panel_scroll_limit(
+                            self.window_rect(),
+                            &Self::shortcut_lines(),
+                            [u32::from(self.cell.0), u32::from(self.cell.1)],
+                        );
+                        let selected = selected.min(limit);
+                        let offset = match event.logical_key.as_ref() {
+                            Key::Named(NamedKey::Escape) => return self.action(Action::Panel),
+                            Key::Named(NamedKey::ArrowUp) => selected.saturating_sub(1),
+                            Key::Named(NamedKey::ArrowDown) => (selected + 1).min(limit),
+                            _ => return Ok(false),
+                        };
+                        self.menu = Some((offset, anchor));
+                        self.scheduler.invalidate();
+                        return Ok(false);
+                    }
+                    let actions = Self::menu_actions(anchor.is_some());
+                    let key = input::settings_key(event.logical_key.as_ref(), self.modifiers);
+                    self.menu = match key {
+                        Some(crate::settings::Key::Up) => {
+                            Some(((selected + actions.len() - 1) % actions.len(), anchor))
+                        }
+                        Some(crate::settings::Key::Down) => {
+                            Some(((selected + 1) % actions.len(), anchor))
+                        }
+                        Some(crate::settings::Key::Escape | crate::settings::Key::Enter) => None,
+                        _ => self.menu,
+                    };
+                    self.scheduler.invalidate();
+                    if key == Some(crate::settings::Key::Enter)
+                        && let Some((_, _, action)) = actions.into_iter().nth(selected)
+                    {
+                        return self.action(action);
+                    }
+                    if matches!(event.logical_key.as_ref(), winit::keyboard::Key::Character(key) if key.eq_ignore_ascii_case("s"))
+                        && key == Some(crate::settings::Key::Escape)
+                    {
+                        self.open_settings();
+                    }
+                    return Ok(false);
+                }
                 if let Some(settings) = &mut self.settings {
                     if let Some(key) =
                         input::settings_key(event.logical_key.as_ref(), self.modifiers)
                     {
+                        let previous = settings.preview().clone();
                         let outcome = settings.key(key);
+                        if settings.preview() != &previous {
+                            self.settings_deadline = (settings.preview() != &self.config)
+                                .then(|| Instant::now() + Duration::from_millis(150));
+                        }
                         self.settings_outcome(outcome)?;
                     }
                     return Ok(false);
@@ -912,7 +1185,9 @@ impl State {
             }
             WindowEvent::Ime(event) => {
                 let committed = self.composition.update(event);
-                if let Some(text) = committed.filter(|_| self.settings.is_none()) {
+                if let Some(text) =
+                    committed.filter(|_| self.settings.is_none() && self.menu.is_none())
+                {
                     self.send_input(Input::Text(&text))?;
                 }
                 self.scheduler.invalidate();
@@ -926,7 +1201,27 @@ impl State {
                 button: MouseButton::Left,
                 state: ElementState::Pressed,
                 ..
-            } => self.press(),
+            } => {
+                if self.menu.is_some() {
+                    return self.menu_click();
+                }
+                self.press();
+            }
+            WindowEvent::MouseInput {
+                button: MouseButton::Right,
+                state: ElementState::Pressed,
+                ..
+            } if self.settings.is_none() => {
+                if let Some(id) = self.pane_under_pointer()
+                    && id != self.tabs.focused()
+                {
+                    self.tabs.active_mut().layout.set_focus(id);
+                    self.activate();
+                }
+                if let Some(anchor) = self.pointer_source() {
+                    self.open_menu(Some(anchor));
+                }
+            }
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: ElementState::Released,
@@ -934,7 +1229,7 @@ impl State {
             } => {
                 self.selection_start = None;
             }
-            WindowEvent::MouseWheel { delta, .. } => self.scroll(delta),
+            WindowEvent::MouseWheel { delta, .. } if self.menu.is_none() => self.scroll(delta),
             WindowEvent::RedrawRequested => self.draw(events)?,
             _ => {}
         }
@@ -995,6 +1290,14 @@ fn create_renderer(
 }
 
 fn render_mode(config: &Config) -> RenderMode {
+    if config.effects.crt && !config.effects.levels.is_empty() {
+        return RenderMode::CustomCrt(
+            retro_renderer::CrtLevels(retro_renderer::CRT_CONTROLS.map(|(key, _, default)| {
+                config.effects.levels.get(key).copied().unwrap_or(default)
+            })),
+            config.effects.animation,
+        );
+    }
     match (config.effects.crt, config.effects.animation) {
         (true, true) => RenderMode::AnimatedCrt,
         (true, false) => RenderMode::StaticCrt,
@@ -1122,13 +1425,21 @@ impl ApplicationHandler<Event> for App {
 
     fn about_to_wait(&mut self, events: &ActiveEventLoop) {
         let Some(state) = &mut self.state else { return };
-        if state.scheduler.request_frame(Instant::now()) {
+        let now = Instant::now();
+        if let Err(error) = state.apply_pending_settings(now) {
+            self.close(events, Some(error));
+            return;
+        }
+        if state.scheduler.request_frame(now) {
             state.window.request_redraw();
         }
         events.set_control_flow(
             state
                 .scheduler
                 .deadline()
+                .into_iter()
+                .chain(state.settings_deadline)
+                .min()
                 .map_or(ControlFlow::Wait, ControlFlow::WaitUntil),
         );
     }

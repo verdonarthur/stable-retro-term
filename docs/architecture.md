@@ -44,8 +44,12 @@ The terminal and renderer crates do not know about each other. The app crate con
 3. The app takes a snapshot of the visible screen and gives it to the renderer.
 4. The renderer redraws only when something changed, or when an enabled animation needs a frame.
 
-## Milestones
+## Window controls and effects
 
-Done in development builds: terminal engine, plain graphical terminal, performance harness, static CRT,
-text configuration, tabs and splits, settings panel. Planned: optional animation, automatic release.
-The settings panel is drawn into the same scene as the terminal, with no extra GPU resources.
+The app shows tabs, pane dividers, menus, and Quick Settings in the terminal
+window. Menus share the same commands as keyboard shortcuts. Quick Settings
+edits the TOML configuration and applies changes when saved.
+
+The CRT pass processes the terminal image after text rendering. Animated
+effects request timed frames. Burn-in uses prior frames to simulate phosphor
+persistence. The plain profile sends the terminal image directly to the window.

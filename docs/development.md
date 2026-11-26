@@ -68,7 +68,7 @@ and commit, selection, clipboard integration with another application, scrolling
 through shell history, window resize, and a display scale change. Check that the
 frame log stops growing while the screen is idle with a non-blinking cursor.
 Exit the shell. Launch once more and close the window while the shell is running.
-Record the compositor, GPU, driver, and any missing coverage in the Task 04 plan.
+Record the compositor, GPU, driver, and any missing coverage in the active plan.
 
 The GPU test reads pixels from the production draw path with fixed font fixtures.
 If only a software adapter is available, set `RETRO_TERM_TEST_SOFTWARE_GPU=1` for

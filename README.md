@@ -3,7 +3,7 @@
 A terminal emulator with a retro CRT look, written in Rust.
 
 Status: in development. There is no release yet. The terminal runs from source with
-static CRT effects, a text configuration file, tabs, splits, and a settings panel.
+CRT profiles, tabs, splits, and Quick Settings.
 
 ## Platform
 
@@ -21,12 +21,15 @@ target/release/retro-term -- htop          # run a program in the first pane
 
 Options: `retro-term [--plain] [--config PATH] [-- COMMAND [ARG...]]`.
 
-## Presets
+## Using the terminal
 
-- `static-crt` (default): static CRT effects.
-- `plain`: no CRT effects.
+Press Ctrl+Shift+P to open the action panel. Use it to open tabs, split panes,
+or open Quick Settings. Press Ctrl+Shift+S for direct access to Quick Settings.
+Right-click for clipboard and pane actions.
 
-Select a preset in the [configuration file](docs/configuration.md) or in the settings panel (Ctrl+Shift+P).
+Choose a built-in [CRT profile](docs/configuration.md#profiles) or adjust the
+screen, terminal, and effects settings. Use the plain profile to turn the CRT
+effects off.
 
 ## Performance
 

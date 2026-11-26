@@ -1,0 +1,33 @@
+[font]
+size = 14
+line_height = 15
+
+[effects.levels]
+bloom = 70
+burn_in = 10
+static_noise = 10
+jitter = 10
+glow_line = 20
+curvature = 0
+ambient_light = 10
+flicker = 10
+horizontal_sync = 0
+rgb_shift = 10
+frame_shininess = 20
+brightness = 60
+contrast = 80
+margin = 10
+radius = 0
+frame_size = 0
+red = 100
+green = 61
+blue = 84
+scanlines = 12
+background_red = 3
+background_green = 0
+background_blue = 8
+frame_red = 82
+frame_green = 82
+frame_blue = 82
+chroma = 100
+saturation = 80
