@@ -484,11 +484,10 @@ impl State {
                     self.activate();
                 }
             }
-            Action::Split(axis) => {
-                if let Some(pane) = self.tabs.split(axis, area, limits) {
-                    self.open_pane(pane)?;
-                }
-            }
+            Action::Split(axis) => match self.tabs.split(axis, area, limits) {
+                Some(pane) => self.open_pane(pane)?,
+                None => self.show("pane too small to split".into()),
+            },
             Action::ClosePane => return self.close_pane(self.tabs.focused()),
             Action::NextTab => {
                 self.tabs.next();

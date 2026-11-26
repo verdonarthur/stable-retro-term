@@ -358,6 +358,11 @@ tab reordering, tab renaming, multiple windows, session persistence or daemon, p
 
 ## Decisions on Q1–Q16 (user, final)
 
+Follow-up decision: a refused split shows "pane too small to split" in the focused pane's banner
+(the 07 config-error banner; cleared on the next key press or reload). Covered headlessly by
+`split_is_refused_below_the_minimum` (refusal) and `banner_covers_the_last_row_within_the_grid`
+(banner drawing); the `State` wiring needs a window and is part of the smoke check.
+
 The user accepted every recommended option (marked **rec**). The other options stay listed for context only.
 
 - **Q1. Key bindings.** (a) **rec**: Ctrl+Shift+T new tab, Ctrl+Shift+W close pane,
@@ -443,7 +448,8 @@ The user accepted every recommended option (marked **rec**). The other options s
   - `scene::convert` is `#[cfg(test)]` (the window uses `scene::empty` + `scene::pane`);
     `scene::pointer_cell` takes the pane origin. `ui::tab_bar` takes the cell width; `ui::tab_at`
     shares the tab geometry with the click hit test.
-  - A refused split (pane below the minimum) does nothing; no banner. A failed new pane shows
+  - A refused split (pane below the minimum) shows "pane too small to split" in the focused pane's
+    banner (user decision after the first handoff; same banner and clearing as config errors). A failed new pane shows
     "cannot open a pane: ..." in the banner; a failed new tab returns to the previous tab.
   - `docs/architecture.md` unchanged: the feature is not merge-ready until the smoke check runs.
 
@@ -454,7 +460,7 @@ The user accepted every recommended option (marked **rec**). The other options s
 - Changed files: `crates/app/src/{layout.rs (new), tabs.rs (new), ui.rs (new), lib.rs, input.rs, scene.rs, app.rs}`,
   `crates/app/tests/layout.rs` (new), `crates/terminal/tests/descriptors.rs` (new),
   `docs/configuration.md`, `docs/development.md`, `docs/performance.md`, `docs/AI/README.md`, this file.
-- Decisions: Q1–Q16 all **rec** (user). No renderer change (Q2 b, Q3 a), so no renderer code changed.
+- Decisions: Q1–Q16 all **rec** (user). Refused split shows a banner (user, follow-up). No renderer change (Q2 b, Q3 a), so no renderer code changed.
 - Commands run and results:
   - `cargo xtask check`: fmt, check, clippy, test, deny, actionlint, zizmor passed; ignored-tests not_run (the GPU test, run below).
   - `cargo build --locked --release -p retro-app --bin retro-term`: passed.
