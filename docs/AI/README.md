@@ -25,7 +25,7 @@ Base commit: `bc5f6ab` on `main`. Task 01 was done directly on `main` (setup exc
 | [05 — Performance harness and baseline gate](implementation/05-performance-baseline.md) | Harness available. Hardware baseline unverified. | 04 completed. |
 | [06 — Static CRT rendering](implementation/06-static-crt.md) | Implemented locally. Hardware verification pending. | 05 passed for the plain renderer. |
 | [07 — Text configuration and reload](implementation/07-text-configuration.md) | Implemented locally; smoke check and performance unverified | 06 completed. |
-| [08 — Native tabs and splits](implementation/08-tabs-and-splits.md) | Pending | 07 completed. |
+| [08 — Native tabs and splits](implementation/08-tabs-and-splits.md) | Implemented locally; `cargo xtask check` passed; smoke check and performance unverified | 07 completed. |
 | [09 — Optional CRT animations](implementation/09-optional-animation.md) | Pending | 08 completed and resource suite passing. |
 | [10 — Automatic packaging and release](implementation/10-automatic-release.md) | Pending | 08 completed; 09's feasibility outcome recorded. The full suite must pass for every included preset. 02/05 supply CI and measurement tooling. |
 | [11 — Settings UI and documentation polish](implementation/11-settings-and-polish.md) | Pending | 10 completed; higher-priority functionality and resource gates pass. |
