@@ -3,8 +3,8 @@ import time
 import unittest
 
 from metrics import compare, drm_client, gpu_delta, summarize
-from run import Fixture, WorkloadError, assert_frame, candidate_flags, matching
-from wayland import DisplayTimeout, crt_colors, typed_cell, visible
+from run import HISTORY, READY, START, Fixture, WorkloadError, assert_frame, candidate_flags, matching
+from wayland import FLICKER_GAINS, DisplayTimeout, crt_colors, typed_cell, visible
 
 
 class Counters(unittest.TestCase):
@@ -116,18 +116,36 @@ class Display(unittest.TestCase):
                          ["--config", config, "--plain"])
         self.assertEqual(candidate_flags({"candidate_plain": False, "candidate_config": config}),
                          ["--config", config])
+        animated = "/suite/fixtures/retro-term-animated.toml"
+        self.assertEqual(candidate_flags({"candidate_plain": False, "candidate_animated": True,
+                                          "candidate_config": config, "animated_config": animated}),
+                         ["--config", animated])
+
+    def test_flicker_gains_keep_markers_distinct(self):
+        markers = [READY, START, HISTORY, *([51, 91, blue] for blue in range(129, 154)),
+                   *([81, 97, blue] for blue in range(150, 157))]
+        # The bright scanline phase locates a marker. The dark phase already overlaps
+        # between markers one blue level apart in static mode.
+        seen = {}
+        for color in markers:
+            for gain in FLICKER_GAINS:
+                bright = crt_colors(color, gain)[0]
+                owner = seen.setdefault(bright, tuple(color))
+                self.assertEqual(owner, tuple(color), f"{color} at gain {gain} matches {owner}")
 
     def test_crt_marker_cursor_and_typed_cell(self):
         for grid, viewport in (([10, 12, 96, 190], (101, 198)), ([6, 6, 48, 114], (53, 122))):
             with self.subTest(grid=grid):
                 self.check_crt_frame(grid, viewport)
+                self.check_crt_frame(grid, viewport, gain=FLICKER_GAINS[-1])
+                self.check_crt_frame(grid, viewport, gain=FLICKER_GAINS[-1], mixed_gain=1.0)
 
-    def check_crt_frame(self, grid, viewport):
+    def check_crt_frame(self, grid, viewport, gain=1.0, mixed_gain=None):
         color, typed = [51, 91, 130], [81, 97, 150]
         width, height, stride, offset = 122, 220, 500, 8
         viewport_w, viewport_h = viewport
         image = bytearray(offset + stride * height)
-        palette = [crt_colors(rgb) for rgb in (color, typed, [240, 240, 240])]
+        palette = [crt_colors(rgb, gain) for rgb in (color, typed, [240, 240, 240])]
         image[offset:offset + 3] = palette[0][0]  # Unrelated desktop pixel.
         for y in range(viewport_h):
             for x in range(viewport_w):
@@ -144,13 +162,20 @@ class Display(unittest.TestCase):
                     entry = 2
                 index = offset + (y + 11) * stride + (x + 9) * 4
                 image[index:index + 3] = palette[entry][y % 2]
+                if mixed_gain is not None and y >= viewport_h // 2 and entry == 0:
+                    image[index:index + 3] = crt_colors(color, mixed_gain)[y % 2]
         frame = width, height, stride, offset, bytes(image)
-        evidence = visible(frame, color, grid, crt=True)
+        if mixed_gain is not None:
+            self.assertIsNone(visible(frame, color, grid, crt=True, gains=FLICKER_GAINS))
+            return
+        if gain != 1.0:
+            self.assertIsNone(visible(frame, color, grid, crt=True))
+        evidence = visible(frame, color, grid, crt=True, gains=FLICKER_GAINS)
         self.assertIsNotNone(evidence)
         self.assertTrue(evidence["cursor"])
         self.assertTrue(typed_cell(frame, evidence, grid, (1, typed)))
         self.assertFalse(typed_cell(frame, evidence, grid, (2, typed)))
-        self.assertIsNone(visible(frame, [51, 91, 131], grid, crt=True))
+        self.assertIsNone(visible(frame, [51, 91, 131], grid, crt=True, gains=FLICKER_GAINS))
 
     def test_missing_and_late_frames(self):
         class Missing:

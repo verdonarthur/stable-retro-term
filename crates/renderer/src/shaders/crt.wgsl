@@ -17,7 +17,8 @@ fn fragment(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
     // The performance capture probe models these fixed gains in sRGB.
+    // params.z is the flicker gain: always 1.0 in static mode.
     let scanline = select(1.0, 0.88, u32(pixel.y) % 2u == 1u);
     return vec4<f32>(textureSampleLevel(image, linear_sampler, uv, 0.0).rgb *
-        vec3<f32>(0.95, 1.0, 1.0) * scanline, 1.0);
+        vec3<f32>(0.95, 1.0, 1.0) * scanline * params.z, 1.0);
 }

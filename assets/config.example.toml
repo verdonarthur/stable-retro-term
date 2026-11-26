@@ -2,12 +2,14 @@
 # Location: $XDG_CONFIG_HOME/retro-term/config.toml or ~/.config/retro-term/config.toml.
 # Reload with Ctrl+Shift+R. See docs/configuration.md.
 
-# Built-in preset: "static-crt" or "plain". Keys below override the preset.
+# Built-in preset: "static-crt", "plain", or "animated-crt" (experimental). Keys below override the preset.
 preset = "static-crt"
 
 [effects]
 # false draws without CRT effects, the same as --plain.
 crt = true
+# true adds CRT flicker. Needs crt. Experimental; performance unverified.
+animation = false
 
 [font]
 # Installed font family. Empty selects the system monospace font.

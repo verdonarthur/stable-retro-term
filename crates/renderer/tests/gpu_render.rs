@@ -2,7 +2,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use retro_renderer::scene::{Cluster, Glyph, Rect, Rgb, Scene};
-use retro_renderer::{Fonts, GridRenderer, RenderMode};
+use retro_renderer::{FLICKER_GAINS, Fonts, GridRenderer, RenderMode, flicker_gain};
 use wgpu::{
     BufferDescriptor, BufferUsages, Extent3d, Instance, MapMode, PollType, TexelCopyBufferInfo,
     TexelCopyBufferLayout, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
@@ -117,6 +117,35 @@ fn fixed_grid_readback() {
         .display_point([6.0, 10.0], SIZE)
         .map(|value| value as u32);
     assert!(at(&rendered, SIZE, x, y).0 > 175);
+    let static_rendered = rendered;
+
+    let animated_mode = RenderMode::AnimatedCrt;
+    let mut animated = GridRenderer::with_mode(&device, &queue, FORMAT, fonts(), animated_mode);
+    let frame_with_gain = |gain: f32| (0..64).find(|&frame| flicker_gain(frame) == gain).unwrap();
+    animated.set_animation_frame(frame_with_gain(1.0));
+    let rendered = readback(&device, &queue, &mut animated, SIZE, &effect_scene);
+    assert!(
+        rendered == static_rendered,
+        "gain 1.0 must equal static CRT"
+    );
+
+    let darkest = FLICKER_GAINS[FLICKER_GAINS.len() - 1];
+    animated.set_animation_frame(frame_with_gain(darkest));
+    let rendered = readback(&device, &queue, &mut animated, SIZE, &effect_scene);
+    assert!(
+        rendered
+            .iter()
+            .zip(&static_rendered)
+            .all(|(flicker, fixed)| flicker <= fixed),
+        "flicker must not brighten any channel"
+    );
+    assert!(at(&rendered, SIZE, 64, 32).1 < bright.1);
+    assert_eq!(at(&rendered, SIZE, 0, 0), Rgb(0, 0, 0));
+    assert!(rendered == readback(&device, &queue, &mut animated, SIZE, &effect_scene));
+    let [x, y] = animated_mode
+        .display_point([6.0, 10.0], SIZE)
+        .map(|value| value as u32);
+    assert!(at(&rendered, SIZE, x, y).0 > 150);
 
     let resized = [192, 96];
     effect_scene.fills.clear();

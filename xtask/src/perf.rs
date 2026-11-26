@@ -28,6 +28,9 @@ pub(crate) struct Args {
     /// Measure the candidate with its CRT effects bypassed.
     #[arg(long)]
     candidate_plain: bool,
+    /// Measure the experimental animated CRT preset with the suite's animated_config.
+    #[arg(long, conflicts_with = "candidate_plain")]
+    candidate_animated: bool,
     #[arg(long)]
     baseline: PathBuf,
     #[arg(long)]
@@ -49,6 +52,8 @@ struct Suite {
     baseline_version: String,
     alacritty_config: PathBuf,
     candidate_config: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    animated_config: Option<PathBuf>,
     repetitions: u8,
     sample_ms: u64,
     idle_ms: u64,
@@ -123,6 +128,22 @@ pub(crate) fn run(args: &Args) -> Outcome {
     let candidate_config = candidate_config
         .canonicalize()
         .map_err(|e| io_failure(&candidate_config, &e))?;
+    let animated_config = if args.candidate_animated {
+        let path = suite.animated_config.as_ref().ok_or_else(|| {
+            Failure::usage("--candidate-animated needs animated_config in the suite")
+        })?;
+        let path = args.suite.parent().unwrap_or(Path::new(".")).join(path);
+        Some(path.canonicalize().map_err(|e| io_failure(&path, &e))?)
+    } else {
+        None
+    };
+    let candidate_mode = if args.candidate_plain {
+        "plain"
+    } else if args.candidate_animated {
+        "animated-crt"
+    } else {
+        "static-crt"
+    };
     let source = output("git", &["rev-parse", "HEAD"], &root)?;
     let dirty = !output("git", &["status", "--porcelain"], &root)?.is_empty();
     let candidate = binary(&args.candidate);
@@ -130,7 +151,7 @@ pub(crate) fn run(args: &Args) -> Outcome {
     let mut report = json!({
         "schema": 1, "status": "unverified", "preflight": args.preflight, "scenario": args.scenario,
         "source": source, "dirty": dirty, "suite": suite,
-        "candidate_mode": if args.candidate_plain { "plain" } else { "static-crt" },
+        "candidate_mode": candidate_mode,
         "candidate": candidate, "baseline": baseline,
     });
     let python = find_in_path("python3");
@@ -161,6 +182,7 @@ pub(crate) fn run(args: &Args) -> Outcome {
     let request = json!({
         "suite": suite, "suite_path": suite_path, "config": config,
         "candidate_plain": args.candidate_plain, "candidate_config": candidate_config,
+        "candidate_animated": args.candidate_animated, "animated_config": animated_config,
         "candidate": candidate, "baseline": baseline, "preflight": args.preflight, "scenario": args.scenario,
     });
     let driver = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/perf/run.py");

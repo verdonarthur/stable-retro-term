@@ -40,10 +40,15 @@ cargo build --locked --release -p retro-app --bin retro-term
 cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/preflight.json --preflight
 cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/static.json
 cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/plain.json --candidate-plain
+cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/animated.json --candidate-animated
 ```
 
 The candidate runs with `--config benchmarks/fixtures/retro-term.toml` (the suite key
 `candidate_config`), so a user configuration file does not change the result.
+`--candidate-animated` uses `benchmarks/fixtures/retro-term-animated.toml` (the suite key
+`animated_config`) and reports `candidate_mode = "animated-crt"`. The capture probe accepts a
+frame only when every probe point matches the same flicker gain. The animated preset is
+experimental; its performance is unverified until a valid report exists.
 
 Preflight checks the baseline version and records binary, source, suite, and font
 identity. It checks that the desktop portal advertises the keyboard, pointer,

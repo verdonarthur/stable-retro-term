@@ -16,7 +16,7 @@ import time
 import tomllib
 
 from metrics import METRICS, compare, process_stat, sample, summarize
-from wayland import DisplayTimeout, Unavailable, Wayland, visible
+from wayland import FLICKER_GAINS, DisplayTimeout, Unavailable, Wayland, visible
 
 
 HERE = Path(__file__).resolve().parent
@@ -85,6 +85,8 @@ def prepare(request, directory, report):
         "baseline_build": os.environ.get("RETRO_PERF_ALACRITTY_BUILD"),
         "suite_sha256": sha(request["suite_path"]), "alacritty_config_sha256": sha(config),
         "candidate_config_sha256": sha(request["candidate_config"]),
+        **({"animated_config_sha256": sha(request["animated_config"])}
+           if request.get("candidate_animated") else {}),
         "harness_sha256": {file.name: sha(file) for file in sorted(HERE.glob("*.py"))
                            if not file.name.startswith("test_")},
     }
@@ -191,6 +193,8 @@ class Fixture:
 
 
 def candidate_flags(request):
+    if request.get("candidate_animated"):
+        return ["--config", str(request["animated_config"])]
     return ["--config", str(request["candidate_config"]),
             *(["--plain"] if request["candidate_plain"] else [])]
 
@@ -267,7 +271,8 @@ def cursor_run(driver, frame, duration, blink):
         timeout = remain if first_missing is None else min(remain, 0.1)
         shot = driver.frame(timeout)
         if shot is not None:
-            state = visible(shot, color, grid, crt=frame.get("crt", False), area=frame["area"])
+            state = visible(shot, color, grid, crt=frame.get("crt", False), area=frame["area"],
+                            gains=driver.gains)
             if state is None:
                 if first_missing is None:
                     first_missing = time.monotonic()
@@ -321,6 +326,8 @@ def leg(request, driver, env, directory, kind, scenario):
     result = {"valid": False, "metrics": dict.fromkeys(METRICS), "engines": None, "evidence": []}
     recorder = None
     driver.crt = kind == "candidate" and not request["candidate_plain"]
+    animated = kind == "candidate" and request.get("candidate_animated", False)
+    driver.gains = FLICKER_GAINS if animated else (1.0,)
     driver.crt_area = None
     try:
         with terminal(request, env, directory, kind, scenario == "blink") as (
