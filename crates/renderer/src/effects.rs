@@ -4,11 +4,28 @@ use wgpu::util::DeviceExt;
 const SCALE: f32 = 1.025;
 const CURVATURE: f32 = 0.018;
 
+/// Brightness gains of the animated CRT flicker. The capture probe in
+/// xtask/src/perf/wayland.py copies these values.
+pub const FLICKER_GAINS: [f32; 3] = [1.0, 0.975, 0.955];
+
+/// The flicker gain of one presented frame. It is a pure function of the frame number.
+pub fn flicker_gain(frame: u32) -> f32 {
+    let mut hash = frame;
+    hash ^= hash >> 16;
+    hash = hash.wrapping_mul(0x7feb_352d);
+    hash ^= hash >> 15;
+    hash = hash.wrapping_mul(0x846c_a68b);
+    hash ^= hash >> 16;
+    FLICKER_GAINS[hash as usize % FLICKER_GAINS.len()]
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RenderMode {
     Plain,
     #[default]
     StaticCrt,
+    /// Static CRT with a flicker gain that changes only on frames the app already draws.
+    AnimatedCrt,
 }
 
 impl RenderMode {
@@ -46,6 +63,7 @@ pub(crate) struct Crt {
     pipeline: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
     params: wgpu::Buffer,
+    animated: bool,
     target: Option<Target>,
 }
 
@@ -56,10 +74,10 @@ struct Target {
 }
 
 impl Crt {
-    pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat, animated: bool) -> Self {
         let shader = device.create_shader_module(wgpu::include_wgsl!("shaders/crt.wgsl"));
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("static CRT"),
+            label: Some("CRT"),
             layout: None,
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -86,14 +104,22 @@ impl Crt {
         });
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("CRT geometry"),
-            contents: &[SCALE, CURVATURE, 0.0, 0.0].map(f32::to_ne_bytes).concat(),
-            usage: wgpu::BufferUsages::UNIFORM,
+            contents: &[SCALE, CURVATURE, 1.0, 0.0].map(f32::to_ne_bytes).concat(),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         Self {
             pipeline,
             sampler,
             params,
+            animated,
             target: None,
+        }
+    }
+
+    /// Static mode never writes the parameters after creation.
+    pub(crate) fn set_frame(&self, queue: &wgpu::Queue, frame: u32) {
+        if self.animated {
+            queue.write_buffer(&self.params, 8, &flicker_gain(frame).to_ne_bytes());
         }
     }
 
@@ -182,7 +208,37 @@ mod tests {
                 assert!((source[0] - point[0]).abs() < 1e-8);
                 assert!((source[1] - point[1]).abs() < 1e-8);
                 assert_eq!(RenderMode::Plain.source_point(point, size), point);
+                assert_eq!(RenderMode::AnimatedCrt.display_point(point, size), screen);
+                assert_eq!(RenderMode::AnimatedCrt.source_point(screen, size), source);
             }
+        }
+    }
+
+    #[test]
+    fn flicker_gain_is_deterministic_and_bounded() {
+        let mut seen = [false; FLICKER_GAINS.len()];
+        for frame in 0..10_000 {
+            let gain = flicker_gain(frame);
+            assert_eq!(gain, flicker_gain(frame));
+            let index = FLICKER_GAINS
+                .iter()
+                .position(|&value| value == gain)
+                .unwrap();
+            seen[index] = true;
+        }
+        assert!(seen.iter().all(|&found| found));
+        assert_eq!(FLICKER_GAINS[0], 1.0);
+        assert!(FLICKER_GAINS.iter().all(|&gain| gain >= 0.95));
+    }
+
+    #[test]
+    fn flicker_gain_varies_between_frames() {
+        let gains: Vec<f32> = (0..64).map(flicker_gain).collect();
+        assert!(gains.iter().any(|&gain| gain != gains[0]));
+        let mut run = 1;
+        for pair in gains.windows(2) {
+            run = if pair[0] == pair[1] { run + 1 } else { 1 };
+            assert!(run <= 8, "flicker gain is constant for more than 8 frames");
         }
     }
 }

@@ -1,0 +1,5 @@
+# Static CRT effects plus flicker. Experimental; performance unverified.
+
+[effects]
+crt = true
+animation = true

@@ -2,7 +2,7 @@
 
 mod effects;
 pub mod scene;
-pub use effects::RenderMode;
+pub use effects::{FLICKER_GAINS, RenderMode, flicker_gain};
 mod text;
 
 use std::error::Error;
@@ -24,6 +24,7 @@ pub struct GridRenderer {
     fills: wgpu::Buffer,
     fill_bytes: Vec<u8>,
     crt: Option<effects::Crt>,
+    animation_frame: u32,
     format: wgpu::TextureFormat,
 }
 
@@ -79,13 +80,20 @@ impl GridRenderer {
             pipeline,
             fills: fill_buffer(device, FILL_STRIDE),
             fill_bytes: Vec::new(),
-            crt: (mode == RenderMode::StaticCrt).then(|| effects::Crt::new(device, format)),
+            crt: (mode != RenderMode::Plain)
+                .then(|| effects::Crt::new(device, format, mode == RenderMode::AnimatedCrt)),
+            animation_frame: 0,
             format,
         }
     }
 
     pub fn cell_width(&mut self, font_size: u16, line_height: u16) -> u16 {
         self.text.fonts.cell_width(font_size, line_height)
+    }
+
+    /// Only the animated CRT mode reads the frame number.
+    pub fn set_animation_frame(&mut self, frame: u32) {
+        self.animation_frame = frame;
     }
 
     pub fn draw(
@@ -98,6 +106,9 @@ impl GridRenderer {
     ) -> RenderResult<wgpu::SubmissionIndex> {
         if size.contains(&0) {
             return Err(io::Error::other("cannot draw a zero-sized terminal").into());
+        }
+        if let Some(crt) = &self.crt {
+            crt.set_frame(queue, self.animation_frame);
         }
         let scene_view = self
             .crt
@@ -258,6 +269,10 @@ impl SurfaceRenderer {
 
     pub fn cell_width(&mut self, font_size: u16, line_height: u16) -> u16 {
         self.grid.cell_width(font_size, line_height)
+    }
+
+    pub fn set_animation_frame(&mut self, frame: u32) {
+        self.grid.set_animation_frame(frame);
     }
 
     /// Rebuilds the grid renderer on the same device. On error nothing changes.

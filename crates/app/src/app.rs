@@ -129,6 +129,8 @@ struct State {
     overrides: Overrides,
     banner: String,
     previous_ime_cursor: Option<(GridSize, Position, [u32; 2])>,
+    /// Counts presented frames. Only the animated CRT mode reads it.
+    animation_frame: u32,
 }
 
 impl State {
@@ -207,6 +209,7 @@ impl State {
             overrides,
             banner: String::new(),
             previous_ime_cursor: None,
+            animation_frame: 0,
         };
         state.insert(pane, session, grid);
         if let Some(error) = startup_error {
@@ -654,11 +657,13 @@ impl State {
             && self.composition.preedit.is_empty();
         let visible = self.scheduler.cursor_visible(now, blinking);
         let scene = self.compose(focused, &snapshot, visible);
+        self.renderer.set_animation_frame(self.animation_frame);
         match self
             .renderer
             .draw(&scene, || self.window.pre_present_notify())?
         {
             Frame::Presented => {
+                self.animation_frame = self.animation_frame.wrapping_add(1);
                 self.gpu_recovered = false;
                 if self.development {
                     eprintln!("frame presented");
@@ -878,10 +883,10 @@ fn create_renderer(
 }
 
 fn render_mode(config: &Config) -> RenderMode {
-    if config.effects.crt {
-        RenderMode::StaticCrt
-    } else {
-        RenderMode::Plain
+    match (config.effects.crt, config.effects.animation) {
+        (true, true) => RenderMode::AnimatedCrt,
+        (true, false) => RenderMode::StaticCrt,
+        (false, _) => RenderMode::Plain,
     }
 }
 
@@ -1014,5 +1019,24 @@ impl ApplicationHandler<Event> for App {
                 .deadline()
                 .map_or(ControlFlow::Wait, ControlFlow::WaitUntil),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_mode_follows_crt_and_animation() {
+        let mode = |crt, animation| {
+            let mut config = Config::default();
+            config.effects.crt = crt;
+            config.effects.animation = animation;
+            render_mode(&config)
+        };
+        assert_eq!(mode(false, false), RenderMode::Plain);
+        assert_eq!(mode(false, true), RenderMode::Plain);
+        assert_eq!(mode(true, false), RenderMode::StaticCrt);
+        assert_eq!(mode(true, true), RenderMode::AnimatedCrt);
     }
 }

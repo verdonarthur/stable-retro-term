@@ -14,7 +14,7 @@ A missing default file gives the defaults.
 ## Precedence
 
 Built-in defaults, then the selected preset, then the file, then the command line.
-`--plain` turns off the CRT effects. A program after `--` runs in the first pane only.
+`--plain` turns off the CRT effects, also with `effects.animation = true`. A program after `--` runs in the first pane only.
 New panes and tabs start `shell.program` with `shell.args`, or your login shell.
 Command-line values stay active after a reload.
 
@@ -22,8 +22,9 @@ Command-line values stay active after a reload.
 
 | Key | Type | Default | Range |
 | --- | --- | --- | --- |
-| `preset` | string | `"static-crt"` | `"static-crt"`, `"plain"` |
+| `preset` | string | `"static-crt"` | `"static-crt"`, `"plain"`, `"animated-crt"` |
 | `effects.crt` | bool | `true` | `false` draws without CRT effects |
+| `effects.animation` | bool | `false` | `true` adds CRT flicker; needs `effects.crt`. Experimental; performance unverified |
 | `font.family` | string | `""` | An installed family; `""` selects the system monospace font |
 | `font.size` | integer | `14` | 6 to 72 pixels at scale 1 |
 | `font.line_height` | integer | `19` | `font.size` to twice `font.size`, pixels at scale 1 |
@@ -38,6 +39,8 @@ Unknown keys are errors.
 
 - `static-crt`: the default look with static CRT effects.
 - `plain`: no CRT effects.
+- `animated-crt`: static CRT effects plus flicker on frames that retro-term draws anyway.
+  Experimental; performance unverified.
 
 The preset files are in [`assets/presets/`](../assets/presets/). Keys in your file override the preset.
 
@@ -45,7 +48,7 @@ The preset files are in [`assets/presets/`](../assets/presets/). Keys in your fi
 
 Press Ctrl+Shift+R to read the file again.
 
-- Applies to the open window: `preset`, `effects.crt`, and the `font` keys. A font change resizes the grid and the shell.
+- Applies to the open window: `preset`, the `effects` keys, and the `font` keys. A font change resizes the grid and the shell.
 - Applies to new panes and tabs only: the `terminal` and `shell` keys. retro-term shows a message when they change.
 
 ## Errors

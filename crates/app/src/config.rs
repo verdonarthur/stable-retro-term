@@ -9,12 +9,16 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_PRESET: &str = "static-crt";
-pub const PRESETS: [(&str, &str); 2] = [
+pub const PRESETS: [(&str, &str); 3] = [
     (
         "static-crt",
         include_str!("../../../assets/presets/static-crt.toml"),
     ),
     ("plain", include_str!("../../../assets/presets/plain.toml")),
+    (
+        "animated-crt",
+        include_str!("../../../assets/presets/animated-crt.toml"),
+    ),
 ];
 
 const FONT_SIZE: std::ops::RangeInclusive<u16> = 6..=72;
@@ -35,6 +39,8 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct Effects {
     pub crt: bool,
+    /// Experimental CRT flicker. Needs `crt`.
+    pub animation: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,7 +74,10 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             preset: DEFAULT_PRESET.into(),
-            effects: Effects { crt: true },
+            effects: Effects {
+                crt: true,
+                animation: false,
+            },
             font: Font {
                 family: String::new(),
                 size: 14,
@@ -101,6 +110,7 @@ pub struct Layer {
 #[serde(deny_unknown_fields)]
 pub struct EffectsLayer {
     pub crt: Option<bool>,
+    pub animation: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -137,6 +147,7 @@ impl Layer {
             }
         }
         set(&mut config.effects.crt, self.effects.crt);
+        set(&mut config.effects.animation, self.effects.animation);
         set(&mut config.font.family, self.font.family);
         set(&mut config.font.size, self.font.size);
         set(&mut config.font.line_height, self.font.line_height);

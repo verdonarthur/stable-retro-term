@@ -21,6 +21,7 @@ fn temp_path(name: &str) -> PathBuf {
 fn defaults_match_the_base_behavior() {
     let config = Config::default();
     assert!(config.effects.crt);
+    assert!(!config.effects.animation);
     assert_eq!(config.preset, "static-crt");
     assert_eq!(config.font.family, "");
     assert_eq!((config.font.size, config.font.line_height), (14, 19));
@@ -139,7 +140,24 @@ fn unknown_preset_lists_known_names() {
 #[test]
 fn example_file_equals_defaults() {
     let example = include_str!("../../../assets/config.example.toml");
-    assert_eq!(resolve(example).unwrap(), Config::default());
+    let config = resolve(example).unwrap();
+    assert!(!config.effects.animation);
+    assert_eq!(config, Config::default());
+}
+
+#[test]
+fn animated_preset_enables_animation() {
+    let preset = "preset = \"animated-crt\"\n";
+    let config = resolve(preset).unwrap();
+    assert!(config.effects.crt && config.effects.animation);
+    let config = resolve(&format!("{preset}[effects]\nanimation = false\n")).unwrap();
+    assert!(config.effects.crt && !config.effects.animation);
+    let plain = Overrides {
+        plain: true,
+        ..Overrides::default()
+    };
+    let config = Config::resolve(Layer::parse(preset).unwrap(), &plain).unwrap();
+    assert!(!config.effects.crt);
 }
 
 #[test]
@@ -180,6 +198,8 @@ fn changes_classify_live_and_new_session_settings() {
     assert_eq!(Changes::between(&old, &old), Changes::default());
     let crt = changed(|c| c.effects.crt = false);
     assert!(crt.renderer && crt.layout && !crt.new_sessions);
+    let animation = changed(|c| c.effects.animation = true);
+    assert!(animation.renderer && animation.layout && !animation.new_sessions);
     let family = changed(|c| c.font.family = "Mono".into());
     assert!(family.renderer && family.layout);
     let size = changed(|c| c.font.size = 16);
