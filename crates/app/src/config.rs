@@ -21,8 +21,8 @@ pub const PRESETS: [(&str, &str); 3] = [
     ),
 ];
 
-const FONT_SIZE: std::ops::RangeInclusive<u16> = 6..=72;
-const MAX_SCROLLBACK_LINES: usize = 100_000;
+pub const FONT_SIZE: std::ops::RangeInclusive<u16> = 6..=72;
+pub const MAX_SCROLLBACK_LINES: usize = 100_000;
 
 /// The resolved and validated settings. The only settings model of the application.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -380,3 +380,76 @@ impl fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
+
+/// Replaces the file at `path` with `text` when it still holds `expected` (`None`: no file).
+/// Follows a symlink to its target. On any error the old file stays unchanged.
+pub fn save(path: &Path, expected: Option<&str>, text: &str) -> Result<(), SaveError> {
+    let target = if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_symlink()) {
+        fs::canonicalize(path)?
+    } else {
+        path.to_path_buf()
+    };
+    let current = match fs::read_to_string(&target) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        result => Some(result?),
+    };
+    if current.as_deref() != expected {
+        return Err(SaveError::Changed);
+    }
+    let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a file path").into());
+    };
+    fs::create_dir_all(parent)?;
+    let mut temp_name = OsString::from(".");
+    temp_name.push(name);
+    temp_name.push(format!(".{}.tmp", std::process::id()));
+    let temp = parent.join(temp_name);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)?;
+    let written = (|| {
+        io::Write::write_all(&mut file, text.as_bytes())?;
+        if current.is_some() {
+            file.set_permissions(fs::metadata(&target)?.permissions())?;
+        }
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temp, &target)
+    })();
+    if let Err(error) = written {
+        let _ = fs::remove_file(&temp);
+        return Err(error.into());
+    }
+    if let Ok(directory) = fs::File::open(parent) {
+        let _ = directory.sync_all();
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+pub enum SaveError {
+    /// The file on disk is not the text read when the panel opened.
+    Changed,
+    Io(io::Error),
+}
+
+impl From<io::Error> for SaveError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl fmt::Display for SaveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Changed => write!(
+                f,
+                "the file changed on disk; close the panel, press Ctrl+Shift+R, and open it again"
+            ),
+            Self::Io(error) => write!(f, "cannot save: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for SaveError {}

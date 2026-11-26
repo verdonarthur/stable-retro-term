@@ -28,10 +28,10 @@ Base commit: `bc5f6ab` on `main`. Task 01 was done directly on `main` (setup exc
 | [08 — Native tabs and splits](implementation/08-tabs-and-splits.md) | Implemented locally; `cargo xtask check` passed; smoke check and performance unverified | 07 completed. |
 | [09 — Optional CRT animations](implementation/09-optional-animation.md) | Implemented, perf unverified (flicker on drawn frames only; `animated-crt` preset experimental; `cargo xtask check` passed; Alacritty missing, `perf --preflight` exits 3) | 08 completed and resource suite passing (suite unverified for 06–08; see plan C1). |
 | [10 — Automatic packaging and release](implementation/10-automatic-release.md) | Pending | 08 completed; 09's feasibility outcome recorded. The full suite must pass for every included preset. 02/05 supply CI and measurement tooling. |
-| [11 — Settings UI and documentation polish](implementation/11-settings-and-polish.md) | Pending | 10 completed; higher-priority functionality and resource gates pass. |
+| [11 — Settings UI and documentation polish](implementation/11-settings-and-polish.md) | Implemented locally; `cargo xtask check` passed; smoke check and performance unverified | 08 completed. The user approved running 11 before 10 and in parallel with 09. |
 
 Follow dependency order. This list is not authorization to implement all tasks.
-Task 11 is optional low-priority work after the initial release pipeline.
+Task 11 was optional low-priority work after the release pipeline; the user approved running it before 10 (plan D3).
 Task 09 may produce an explicit infeasibility finding; do not claim animation support if nothing passes.
 Task 10 may release only features/presets with valid passing evidence.
 
