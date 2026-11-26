@@ -81,6 +81,7 @@ pub struct Cursor {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub size: GridSize,
+    pub background: Rgb,
     pub cells: Vec<Cell>,
     pub cursor: Cursor,
     /// Number of lines between the live screen and the current viewport.

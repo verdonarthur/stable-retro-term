@@ -4,6 +4,7 @@ mod check;
 mod doctor;
 mod process;
 mod report;
+mod run;
 mod worktree;
 
 use std::process::ExitCode;
@@ -27,6 +28,8 @@ enum Command {
     Doctor(doctor::Args),
     /// Run the checks that CI runs.
     Check(check::Args),
+    /// Launch the plain Wayland terminal with development diagnostics.
+    Run,
     /// Create, list, and remove task worktrees under `.worktrees/`.
     #[command(subcommand)]
     Worktree(worktree::Command),
@@ -66,6 +69,7 @@ fn main() -> ExitCode {
     let outcome = match cli.command {
         Command::Doctor(args) => doctor::run(&args),
         Command::Check(args) => check::run(&args),
+        Command::Run => run::run(),
         Command::Worktree(command) => worktree::run(&command),
     };
     outcome.unwrap_or_else(|failure| {

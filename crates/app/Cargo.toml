@@ -9,6 +9,14 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+pollster.workspace = true
+retro-renderer = { path = "../renderer" }
+retro-terminal = { path = "../terminal" }
+unicode-width = "0.2"
+winit.workspace = true
+wl-clipboard-rs.workspace = true
+
 [[bin]]
 name = "retro-term"
 path = "src/main.rs"

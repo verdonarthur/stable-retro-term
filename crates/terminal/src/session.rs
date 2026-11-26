@@ -95,6 +95,12 @@ pub struct SessionUpdate {
     pub exit_status: Option<ExitStatus>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KeyboardModes {
+    pub application_cursor: bool,
+    pub application_keypad: bool,
+}
+
 type Worker = EventLoop<tty::Pty, Listener>;
 
 /// Owns a Linux PTY worker. Snapshots remain available after close or child exit.
@@ -244,6 +250,15 @@ impl Session {
         self.send(Msg::Input(input::encode(input, bracketed).into()))
     }
 
+    /// Read the cursor and keypad modes set by the foreground program.
+    pub fn keyboard_modes(&self) -> KeyboardModes {
+        let modes = *self.terminal.lock().mode();
+        KeyboardModes {
+            application_cursor: modes.contains(TermMode::APP_CURSOR),
+            application_keypad: modes.contains(TermMode::APP_KEYPAD),
+        }
+    }
+
     /// Queue a PTY resize and update the terminal grid using the same dimensions.
     pub fn resize(&mut self, size: GridSize) -> Result<(), SessionError> {
         if !size.is_valid() {
@@ -265,6 +280,16 @@ impl Session {
         let mut terminal = self.terminal.lock();
         let offset = terminal.grid().display_offset() as i32;
         terminal.scroll_display(Scroll::Delta(lines.min(i32::MAX - offset)));
+    }
+
+    /// Return to the live screen. Report whether the viewport moved.
+    pub fn scroll_to_bottom(&mut self) -> bool {
+        let mut terminal = self.terminal.lock();
+        if terminal.grid().display_offset() == 0 {
+            return false;
+        }
+        terminal.scroll_display(Scroll::Bottom);
+        true
     }
 
     /// Select an inclusive range of visible cells. Returns false for an invalid endpoint.

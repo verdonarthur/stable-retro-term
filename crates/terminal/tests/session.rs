@@ -9,6 +9,28 @@ use std::time::Instant;
 
 use retro_terminal::{GridSize, Input, Session, SessionError, TitleChange};
 
+#[test]
+fn foreground_program_can_change_application_keyboard_modes() {
+    let (mut session, wake) = common::spawn(common::options(
+        r"printf '\033[?1h\033=ENABLED\r\n'; read -r ignored; printf '\033[?1l\033>DISABLED\r\n'; read -r ignored",
+        &[],
+    ));
+    common::wait_for(&mut session, &wake, |session, _| {
+        has_text(session, "ENABLED").then_some(())
+    });
+    let enabled = session.keyboard_modes();
+    assert!(enabled.application_cursor && enabled.application_keypad);
+    session.input(Input::Bytes(b"\n")).unwrap();
+    common::wait_for(&mut session, &wake, |session, _| {
+        has_text(session, "DISABLED").then_some(())
+    });
+    assert_eq!(
+        session.keyboard_modes(),
+        retro_terminal::KeyboardModes::default()
+    );
+    session.input(Input::Bytes(b"\n")).unwrap();
+}
+
 fn has_text(session: &Session, text: &str) -> bool {
     let cells: String = session
         .snapshot()
