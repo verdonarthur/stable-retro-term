@@ -4,7 +4,7 @@ Release Retro Term v0.1.0 for Linux x86-64 through the workflow in [Releasing](.
 
 ## Progress
 
-- Set `bootstrap-sha` to the merge commit that first added the release configuration to `main` (`2210858533cc3b9f577a403d56c40e4bbc740034`).
+- Moved `bootstrap-sha` to the Rust workspace setup commit (`4385b08f63eb2e582e2b7792201c0d7b763f360d`). Release Please skipped the first release PR because the previous cutoff excluded the app's Conventional Commits.
 - Confirmed that GitHub has no releases, release variables, repository Actions secrets, registered self-hosted runners, or rulesets. GitHub reports that `main` is unprotected.
 
 ## Steps
