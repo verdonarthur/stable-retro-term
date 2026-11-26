@@ -27,7 +27,7 @@ The `publish` job is the only job with `contents: write`. It does not check out 
 
 | Part | State in the repository | Needed to enable |
 | --- | --- | --- |
-| Release Please config, manifest, `CHANGELOG.md` | Prepared | `bootstrap-sha` when this lands on `main` |
+| Release Please config, manifest, `CHANGELOG.md` | Prepared | Nothing |
 | `dist-workspace.toml`, `[profile.dist]` | Prepared | Nothing |
 | `ci.yml` `package` job | Active on pull requests | Nothing |
 | `release-please.yml` | Inactive | `RETRO_RELEASE_ENABLED = true` and the `RELEASE_TOKEN` secret |
@@ -47,7 +47,6 @@ Do these in GitHub. The repository holds no credentials.
 - [ ] Branch protection on `main`, so that `github.ref_protected` is true. Required checks: `check`, `deny`, `package`.
 - [ ] Squash merges only. PR titles follow Conventional Commits (`feat:`, `fix:`, `perf:`); they drive the changelog.
 - [ ] Tag ruleset: allow the release token's user to create `v*` tags and protect the tags from updates and deletions.
-- [ ] Add `bootstrap-sha` to `release-please-config.json` (the commit that lands this setup on `main`).
 - [ ] Rehearse: run `release.yml` by hand with `dry_run: true` on a test tag.
 - [ ] Set repository variable `RETRO_RELEASE_ENABLED` to `true`.
 - [ ] After the first release, remove `release-as` from `release-please-config.json`.
