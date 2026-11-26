@@ -1675,6 +1675,8 @@ dependencies = [
  "pollster",
  "retro-renderer",
  "retro-terminal",
+ "serde",
+ "toml",
  "unicode-width",
  "winit",
  "wl-clipboard-rs",

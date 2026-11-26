@@ -1,0 +1,4 @@
+# No CRT effects: the plain bypass.
+
+[effects]
+crt = false

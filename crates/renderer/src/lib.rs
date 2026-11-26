@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use scene::Scene;
-pub use text::Fonts;
+pub use text::{FontError, Fonts};
 pub use wgpu::{Instance, InstanceDescriptor, SurfaceTarget};
 
 type RenderResult<T> = Result<T, Box<dyn Error>>;
@@ -185,6 +185,7 @@ pub struct SurfaceRenderer {
     queue: wgpu::Queue,
     grid: GridRenderer,
     mode: RenderMode,
+    family: Option<String>,
     lost: Arc<AtomicBool>,
     size: [u32; 2],
 }
@@ -202,6 +203,17 @@ impl SurfaceRenderer {
         target: impl Into<SurfaceTarget<'static>>,
         mode: RenderMode,
     ) -> RenderResult<Self> {
+        Self::with_family(instance, target, mode, None).await
+    }
+
+    /// `family: None` selects the system monospace family.
+    pub async fn with_family(
+        instance: Instance,
+        target: impl Into<SurfaceTarget<'static>>,
+        mode: RenderMode,
+        family: Option<&str>,
+    ) -> RenderResult<Self> {
+        let fonts = Fonts::system_family(family)?;
         let surface = instance.create_surface(target)?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -213,7 +225,7 @@ impl SurfaceRenderer {
             .request_device(&wgpu::DeviceDescriptor::default())
             .await?;
         let config = surface_config(&surface, &adapter)?;
-        let grid = GridRenderer::with_mode(&device, &queue, config.format, Fonts::system(), mode);
+        let grid = GridRenderer::with_mode(&device, &queue, config.format, fonts, mode);
         let lost = Arc::new(AtomicBool::new(false));
         let device_lost = lost.clone();
         device.set_device_lost_callback(move |_, _| device_lost.store(true, Ordering::Release));
@@ -226,6 +238,7 @@ impl SurfaceRenderer {
             config,
             grid,
             mode,
+            family: family.map(Into::into),
             lost,
             size: [0, 0],
         })
@@ -245,6 +258,16 @@ impl SurfaceRenderer {
 
     pub fn cell_width(&mut self, font_size: u16, line_height: u16) -> u16 {
         self.grid.cell_width(font_size, line_height)
+    }
+
+    /// Rebuilds the grid renderer on the same device. On error nothing changes.
+    pub fn reconfigure(&mut self, mode: RenderMode, family: Option<&str>) -> Result<(), FontError> {
+        let fonts = Fonts::system_family(family)?;
+        self.grid =
+            GridRenderer::with_mode(&self.device, &self.queue, self.config.format, fonts, mode);
+        self.mode = mode;
+        self.family = family.map(Into::into);
+        Ok(())
     }
 
     pub fn resize(&mut self, size: [u32; 2]) -> RenderResult<()> {
@@ -274,7 +297,7 @@ impl SurfaceRenderer {
                 &self.device,
                 &self.queue,
                 config.format,
-                Fonts::system(),
+                Fonts::system_family(self.family.as_deref())?,
                 self.mode,
             );
         }

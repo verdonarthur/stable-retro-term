@@ -1,0 +1,30 @@
+# retro-term configuration. Every key shows its default value.
+# Location: $XDG_CONFIG_HOME/retro-term/config.toml or ~/.config/retro-term/config.toml.
+# Reload with Ctrl+Shift+R. See docs/configuration.md.
+
+# Built-in preset: "static-crt" or "plain". Keys below override the preset.
+preset = "static-crt"
+
+[effects]
+# false draws without CRT effects, the same as --plain.
+crt = true
+
+[font]
+# Installed font family. Empty selects the system monospace font.
+family = ""
+# Font size in pixels at scale 1, 6 to 72.
+size = 14
+# Line height in pixels at scale 1, from size to twice size.
+line_height = 19
+
+[terminal]
+# Lines kept above the screen, 0 to 100000. Applies to new shells only.
+scrollback_lines = 10000
+
+[shell]
+# Program to run. Empty selects your login shell. Applies to new shells only.
+program = ""
+# Arguments for program. Requires program.
+args = []
+# Start directory. Empty inherits the directory of retro-term.
+working_directory = ""

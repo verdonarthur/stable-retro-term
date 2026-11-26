@@ -1,6 +1,7 @@
 version = 1
 baseline_version = "0.17.0"
 alacritty_config = "fixtures/alacritty.toml"
+candidate_config = "fixtures/retro-term.toml"
 repetitions = 15
 sample_ms = 20
 idle_ms = 4000
