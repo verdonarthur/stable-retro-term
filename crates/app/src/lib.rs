@@ -2,6 +2,7 @@
 
 #[cfg(target_os = "linux")]
 mod app;
+pub mod config;
 #[cfg(target_os = "linux")]
 mod input;
 #[cfg(target_os = "linux")]
@@ -12,4 +13,6 @@ mod scene;
 mod scheduler;
 
 #[cfg(target_os = "linux")]
-pub use app::{run, run_with_program};
+pub use app::{run, run_with_config, run_with_mode, run_with_program};
+#[cfg(target_os = "linux")]
+pub use platform::config_path;

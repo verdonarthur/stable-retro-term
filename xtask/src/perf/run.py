@@ -84,6 +84,7 @@ def prepare(request, directory, report):
         "baseline_version": version,
         "baseline_build": os.environ.get("RETRO_PERF_ALACRITTY_BUILD"),
         "suite_sha256": sha(request["suite_path"]), "alacritty_config_sha256": sha(config),
+        "candidate_config_sha256": sha(request["candidate_config"]),
         "harness_sha256": {file.name: sha(file) for file in sorted(HERE.glob("*.py"))
                            if not file.name.startswith("test_")},
     }
@@ -189,6 +190,11 @@ class Fixture:
         self.connection.close()
 
 
+def candidate_flags(request):
+    return ["--config", str(request["candidate_config"]),
+            *(["--plain"] if request["candidate_plain"] else [])]
+
+
 @contextmanager
 def terminal(request, env, directory, kind, blink=False):
     socket_path = directory / "pty.sock"
@@ -197,7 +203,7 @@ def terminal(request, env, directory, kind, blink=False):
     timeout = request["suite"]["timeout_ms"] / 1000
     fixture_args = [sys.executable, str(HERE / "fixture.py"), str(socket_path)]
     if kind == "candidate":
-        argv = [request[kind], "--", *fixture_args]
+        argv = [request[kind], *candidate_flags(request), "--", *fixture_args]
     else:
         argv = [request[kind], "--config-file", request["config"], "-o",
                 f'cursor.style.blinking={"Always" if blink else "Never"!r}', "-e", *fixture_args]
@@ -261,7 +267,7 @@ def cursor_run(driver, frame, duration, blink):
         timeout = remain if first_missing is None else min(remain, 0.1)
         shot = driver.frame(timeout)
         if shot is not None:
-            state = visible(shot, color, grid)
+            state = visible(shot, color, grid, crt=frame.get("crt", False), area=frame["area"])
             if state is None:
                 if first_missing is None:
                     first_missing = time.monotonic()
@@ -314,6 +320,8 @@ def leg(request, driver, env, directory, kind, scenario):
     timeout = suite["timeout_ms"] / 1000
     result = {"valid": False, "metrics": dict.fromkeys(METRICS), "engines": None, "evidence": []}
     recorder = None
+    driver.crt = kind == "candidate" and not request["candidate_plain"]
+    driver.crt_area = None
     try:
         with terminal(request, env, directory, kind, scenario == "blink") as (
             launch, child, recorder, fixture
@@ -457,7 +465,8 @@ def run_suite(request, driver, env, directory, report):
                 pair[kind] = leg(request, driver, env, directory, kind, scenario)
             matching(pair)
             pairs.append(pair)
-        metrics = {metric: compare(pairs, metric, gpu_resolution) for metric in METRICS}
+        limit = tuple(request["limit"])
+        metrics = {metric: compare(pairs, metric, gpu_resolution, limit) for metric in METRICS}
         failed = any(pair["baseline"]["valid"] and pair["candidate"].get("workload_status") == "failed"
                      for pair in pairs)
         statuses = {entry["status"] for entry in metrics.values()}

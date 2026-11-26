@@ -3,6 +3,7 @@ use retro_terminal::{CellWidth, CursorShape, GridSize, Position, Snapshot, Under
 use unicode_width::UnicodeWidthStr;
 
 const SELECTION: Rgb = Rgb(55, 74, 101);
+const BANNER: Rgb = Rgb(120, 24, 24);
 
 pub(crate) fn grid_size(
     [width, height]: [u32; 2],
@@ -18,9 +19,11 @@ pub(crate) fn grid_size(
     size.is_valid().then_some(size)
 }
 
-pub(crate) fn font_metrics(scale: f64) -> (u16, u16) {
-    let font = (14.0 * scale).round().clamp(1.0, f64::from(u16::MAX)) as u16;
-    let line = (19.0 * scale)
+pub(crate) fn font_metrics(scale: f64, size: u16, line_height: u16) -> (u16, u16) {
+    let font = (f64::from(size) * scale)
+        .round()
+        .clamp(1.0, f64::from(u16::MAX)) as u16;
+    let line = (f64::from(line_height) * scale)
         .round()
         .clamp(f64::from(font), f64::from(u16::MAX)) as u16;
     (font, line)
@@ -41,6 +44,17 @@ pub(crate) fn cell_at(x: f64, y: f64, grid: GridSize, clamp: bool) -> Option<Pos
         column: column.clamp(0.0, max_column) as u16,
         row: row.clamp(0.0, max_row) as u16,
     })
+}
+
+pub(crate) fn pointer_cell(
+    point: [f64; 2],
+    viewport: [u32; 2],
+    mode: retro_renderer::RenderMode,
+    grid: GridSize,
+    clamp: bool,
+) -> Option<Position> {
+    let [x, y] = mode.source_point(point, viewport);
+    cell_at(x, y, grid, clamp)
 }
 
 fn bounds(position: Position, grid: GridSize) -> Rect {
@@ -76,6 +90,7 @@ pub(crate) fn convert(
     font_size: u16,
     cursor_visible: bool,
     preedit: &str,
+    banner: &str,
 ) -> Scene {
     let mut scene = Scene::new(
         rgb(snapshot.background),
@@ -179,23 +194,39 @@ pub(crate) fn convert(
         let remaining = snapshot.size.columns - position.column;
         let columns = preedit.width().clamp(1, usize::from(remaining)) as u16;
         area.width *= u32::from(columns);
-        scene.glyphs.retain(|glyph| {
-            glyph.bounds.y != area.y
-                || glyph.bounds.x + glyph.bounds.width <= area.x
-                || glyph.bounds.x >= area.x + area.width
-        });
-        scene.fill(area, SELECTION);
-        scene.glyphs.push(Glyph {
-            bounds: area,
-            color: Rgb(255, 255, 255),
-            cluster: Cluster {
-                text: preedit.into(),
-                bold: false,
-                italic: false,
+        overlay(&mut scene, area, SELECTION, preedit);
+    }
+    if !banner.is_empty() && snapshot.size.rows > 0 {
+        let mut area = bounds(
+            Position {
+                column: 0,
+                row: snapshot.size.rows - 1,
             },
-        });
+            snapshot.size,
+        );
+        area.width *= u32::from(snapshot.size.columns);
+        overlay(&mut scene, area, BANNER, banner);
     }
     scene
+}
+
+/// Covers `area` with one fill and one glyph cluster that replaces the glyphs below it.
+fn overlay(scene: &mut Scene, area: Rect, background: Rgb, text: &str) {
+    scene.glyphs.retain(|glyph| {
+        glyph.bounds.y != area.y
+            || glyph.bounds.x + glyph.bounds.width <= area.x
+            || glyph.bounds.x >= area.x + area.width
+    });
+    scene.fill(area, background);
+    scene.glyphs.push(Glyph {
+        bounds: area,
+        color: Rgb(255, 255, 255),
+        cluster: Cluster {
+            text: text.into(),
+            bold: false,
+            italic: false,
+        },
+    });
 }
 
 fn cursor_fill(scene: &mut Scene, area: Rect, color: Rgb, shape: CursorShape) {
@@ -289,7 +320,8 @@ mod tests {
 
     #[test]
     fn physical_grid_and_selection_use_the_same_cells() {
-        assert_eq!(font_metrics(1.5), (21, 29));
+        assert_eq!(font_metrics(1.5, 14, 19), (21, 29));
+        assert_eq!(font_metrics(2.0, 20, 24), (40, 48));
         assert!(grid_size([11, 20], 8, 20).is_none());
         assert!(grid_size([80_000, 20], 8, 20).is_none());
         let grid = grid_size([85, 61], 8, 20).unwrap();
@@ -302,6 +334,29 @@ mod tests {
         assert_eq!(
             cell_at(81.0, -1.0, grid, true),
             Some(Position { column: 9, row: 0 })
+        );
+    }
+
+    #[test]
+    fn distorted_selection_maps_edges_and_preserves_padding() {
+        use retro_renderer::RenderMode;
+
+        let size = [85, 61];
+        let grid = grid_size(size, 8, 20).unwrap();
+        let crt = RenderMode::StaticCrt;
+        let last_cell = Some(Position { column: 9, row: 2 });
+        let last_cell_pixel = crt.display_point([79.0, 59.0], size);
+        assert_eq!(
+            pointer_cell(last_cell_pixel, size, crt, grid, false),
+            last_cell
+        );
+        let padding = crt.display_point([82.0, 60.5], size);
+        assert_eq!(pointer_cell(padding, size, crt, grid, false), None);
+        assert_eq!(pointer_cell(padding, size, crt, grid, true), last_cell);
+        assert_eq!(pointer_cell([0.0, 0.0], size, crt, grid, false), None);
+        assert_eq!(
+            pointer_cell([0.0, 0.0], size, RenderMode::Plain, grid, false),
+            Some(Position { column: 0, row: 0 })
         );
     }
 
@@ -347,7 +402,7 @@ mod tests {
             alternate_screen: false,
             bracketed_paste: false,
         };
-        let scene = convert(&snapshot, 14, true, "");
+        let scene = convert(&snapshot, 14, true, "", "");
         assert_eq!(scene.glyphs.len(), 2);
         assert_eq!(
             scene.glyphs[0].bounds,
@@ -360,5 +415,41 @@ mod tests {
         );
         assert_eq!(scene.glyphs[1].bounds.x, 16);
         assert_eq!(scene.glyphs[1].cluster.text, "a\u{301}");
+    }
+
+    #[test]
+    fn banner_covers_the_last_row_within_the_grid() {
+        for columns in [1, 10] {
+            let grid = GridSize {
+                columns,
+                rows: 3,
+                cell_width: 8,
+                cell_height: 20,
+            };
+            let snapshot = Snapshot {
+                size: grid,
+                background: retro_terminal::Rgb(8, 8, 8),
+                cells: Vec::new(),
+                cursor: Cursor {
+                    position: None,
+                    shape: CursorShape::Hidden,
+                    blinking: false,
+                    color: retro_terminal::Rgb(255, 255, 255),
+                },
+                display_offset: 0,
+                alternate_screen: false,
+                bracketed_paste: false,
+            };
+            let scene = convert(&snapshot, 14, true, "", "config error: a long message");
+            let expected = Rect {
+                x: 0,
+                y: 40,
+                width: 8 * u32::from(columns),
+                height: 20,
+            };
+            assert_eq!(scene.glyphs.len(), 1);
+            assert_eq!(scene.glyphs[0].bounds, expected);
+            assert_eq!(scene.fills.last().map(|fill| fill.bounds), Some(expected));
+        }
     }
 }

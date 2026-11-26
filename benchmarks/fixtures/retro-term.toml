@@ -1,0 +1,19 @@
+# Pinned retro-term configuration for performance runs. Every key is at its default.
+# --candidate-plain adds --plain, which overrides effects.crt.
+preset = "static-crt"
+
+[effects]
+crt = true
+
+[font]
+family = ""
+size = 14
+line_height = 19
+
+[terminal]
+scrollback_lines = 10000
+
+[shell]
+program = ""
+args = []
+working_directory = ""

@@ -23,17 +23,18 @@ Base commit: `bc5f6ab` on `main`. Task 01 was done directly on `main` (setup exc
 | [03 — Terminal engine and PTY sessions](implementation/03-terminal-engine.md) | Implemented locally. Headless Rust checks passed, full CI pending. | 02 completed. |
 | [04 — Plain graphical terminal](implementation/04-plain-terminal.md) | Implemented and verified on Wayland. Interactive IME check skipped. | 03 completed. |
 | [05 — Performance harness and baseline gate](implementation/05-performance-baseline.md) | Harness available. Hardware baseline unverified. | 04 completed. |
-| [06 — Static CRT rendering](implementation/06-static-crt.md) | Pending | 05 passed for the plain renderer. |
-| [07 — Text configuration and reload](implementation/07-text-configuration.md) | Pending | 06 completed. |
+| [06 — Static CRT rendering](implementation/06-static-crt.md) | Implemented locally. Hardware verification pending. | 05 passed for the plain renderer. |
+| [07 — Text configuration and reload](implementation/07-text-configuration.md) | Implemented locally; smoke check and performance unverified | 06 completed. |
 | [08 — Native tabs and splits](implementation/08-tabs-and-splits.md) | Pending | 07 completed. |
 | [09 — Optional CRT animations](implementation/09-optional-animation.md) | Pending | 08 completed and resource suite passing. |
-| [10 — Automatic packaging and release](implementation/10-automatic-release.md) | Pending | 08 completed; 09's feasibility outcome recorded. The full suite must pass for every included preset. 02/05 supply CI and measurement tooling. |
+| [10 — Automatic packaging and release](implementation/10-automatic-release.md) | Infrastructure implemented locally (uncommitted). Local checks and `package --check` pass. Perf gate not run; external setup pending. | User-approved reordering: runs now, in parallel with 07, after 02/05/06. Preset list wiring after 07/09 is follow-up F1. |
 | [11 — Settings UI and documentation polish](implementation/11-settings-and-polish.md) | Pending | 10 completed; higher-priority functionality and resource gates pass. |
 
 Follow dependency order. This list is not authorization to implement all tasks.
 Task 11 is optional low-priority work after the initial release pipeline.
 Task 09 may produce an explicit infeasibility finding; do not claim animation support if nothing passes.
-Task 10 may release only features/presets with valid passing evidence.
+Task 10 may release only features/presets with valid passing evidence, unless a person sets the
+explicit, recorded `allow_failed_gate` override (see `docs/releasing.md`).
 
 ## Fresh-session workflow
 

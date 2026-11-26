@@ -34,3 +34,11 @@ pub(crate) fn paste_text() -> Result<String, Box<dyn Error>> {
     }
     Ok(text)
 }
+
+/// The user file path from the process environment.
+pub fn config_path() -> Option<std::path::PathBuf> {
+    crate::config::user_config_path(
+        std::env::var_os("XDG_CONFIG_HOME"),
+        std::env::var_os("HOME"),
+    )
+}

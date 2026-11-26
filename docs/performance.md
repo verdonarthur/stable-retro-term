@@ -1,8 +1,9 @@
 # Performance baseline
 
-The plain renderer must stay within 1.40 times Alacritty for emulator CPU time,
-steady and peak RSS, and attributable GPU engine time in each scenario. The
-suite also checks that expected output becomes visible before its deadline.
+Task 06 applies the 1.40× Alacritty ceiling to emulator CPU time, steady and
+peak RSS, and attributable GPU engine time in each scenario. Measure default
+static CRT and the plain bypass separately. The suite also checks that
+expected output becomes visible before its deadline.
 
 ## Measurement host
 
@@ -37,8 +38,12 @@ scenario interval.
 ```sh
 cargo build --locked --release -p retro-app --bin retro-term
 cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/preflight.json --preflight
-cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/report.json
+cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/static.json
+cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/plain.json --candidate-plain
 ```
+
+The candidate runs with `--config benchmarks/fixtures/retro-term.toml` (the suite key
+`candidate_config`), so a user configuration file does not change the result.
 
 Preflight checks the baseline version and records binary, source, suite, and font
 identity. It checks that the desktop portal advertises the keyboard, pointer,
@@ -55,11 +60,18 @@ Use `--scenario output` with the same command to diagnose scrollback.
 The focused run records whether Alacritty forwards the injected wheel event
 to its PTY with mouse reporting enabled. A focused run cannot pass the gate.
 
-The harness runs 15 alternating-order pairs per scenario by default. It
+The checked-in suite runs 15 alternating-order pairs per scenario. It
 checks ordered display markers, idle cursor state, typed bytes, resize delivery,
 and cleanup after window close. Running preflight alone produces no measured
 results. If a capability is missing, consult the report before interpreting
 any individual result.
+
+The report records the candidate mode. Static CRT capture checks account for
+the projected grid, tint, and scanline phases. Plain and Alacritty capture
+checks use the rectangular grid and original colors. Compare each report to
+the Alacritty measurements from its own run and to the comparable results
+in the accepted [Task 05 baseline](decisions/05-renderer-baseline.md). Keep
+any metric with missing measurements or unresolved uncertainty open.
 
 The JSON report retains raw samples for each terminal as well as the fixture's
 separate CPU and RSS samples. Emulator CPU uses the kernel's process-wide
@@ -70,10 +82,11 @@ DRM clients by PCI device and client ID. A driver may omit an engine until the
 client first uses it, so a missing engine counts as 0 ns. Workload latency includes the shared
 capture path. Missing or inconsistent evidence prevents a pass.
 Each metric is gated on the median pair. The median pair passes when its
-uncertainty range is wholly within 1.40, fails when wholly above it, and is
-unverified otherwise. With an even pair count, both middle pairs must support the same decision.
+uncertainty range is wholly within the limit, fails when wholly above it, and is
+unverified otherwise. The limit is 1.40 (`--limit 7/5`, the default). The release
+gate uses `--limit 6/5` (1.20). Every report records the limit as `"limit": [N, D]`. With an even pair count, both middle pairs must support the same decision.
 When both terminals use less than 1 ms of CPU in an interval, the CPU
-comparison passes as negligible, because scheduler noise exceeds the 1.40 ratio.
+comparison passes as negligible, because scheduler noise exceeds the ratio limit.
 
 Measured runs return 0 only when every required scenario passes. Exit 1 covers
 failed or unverified comparisons, exit 2 covers invalid command or suite input,
@@ -88,6 +101,12 @@ Assign a unique runner label to the physical GPU and pass it as `gpu_label`.
 Run the runner with access to the controlled desktop session and the prerequisites
 above. The reusable workflow serializes measurements by label and uploads
 available JSON reports. Portal access must be available for the job's session.
+
+With the `package_artifact`, `sha`, and `tag` inputs, the workflow measures the
+packaged release binary instead of a source build. It runs
+`cargo xtask release measure`, which checks the binary checksum against the
+package identity and measures every preset in `benchmarks/release-gate.toml`
+with the gate limit. See [releasing](releasing.md).
 
 See the [renderer baseline decision](decisions/05-renderer-baseline.md) for
 the current result.

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use glyphon::{
     Attrs, Buffer, Cache, Color, Family, FontSystem, Metrics, Resolution, Shaping, Style,
@@ -13,28 +14,63 @@ const MAX_RASTER_ENTRIES: usize = 4096;
 
 pub struct Fonts(FontSystem);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FontError {
+    pub family: String,
+}
+
+impl fmt::Display for FontError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "font family `{}` is not installed", self.family)
+    }
+}
+
+impl std::error::Error for FontError {}
+
 impl Fonts {
     pub fn system() -> Self {
-        let mut fonts = FontSystem::new();
-        let family = fonts
-            .db()
-            .faces()
-            .find(|face| face.monospaced)
-            .and_then(|face| face.families.first())
-            .map(|(name, _)| name.clone())
-            .filter(|_| {
+        Self::with_family(FontSystem::new(), None).expect("no family requested")
+    }
+
+    /// `None` selects the system monospace family. A named family must be installed.
+    pub fn system_family(family: Option<&str>) -> Result<Self, FontError> {
+        Self::with_family(FontSystem::new(), family)
+    }
+
+    fn with_family(mut fonts: FontSystem, family: Option<&str>) -> Result<Self, FontError> {
+        let family = match family {
+            Some(requested) => Some(
                 fonts
                     .db()
-                    .query(&fontdb::Query {
-                        families: &[fontdb::Family::Monospace],
-                        ..fontdb::Query::default()
-                    })
-                    .is_none()
-            });
+                    .faces()
+                    .flat_map(|face| &face.families)
+                    .map(|(name, _)| name)
+                    .find(|name| name.eq_ignore_ascii_case(requested))
+                    .cloned()
+                    .ok_or_else(|| FontError {
+                        family: requested.into(),
+                    })?,
+            ),
+            None => fonts
+                .db()
+                .faces()
+                .find(|face| face.monospaced)
+                .and_then(|face| face.families.first())
+                .map(|(name, _)| name.clone())
+                .filter(|_| {
+                    fonts
+                        .db()
+                        .query(&fontdb::Query {
+                            families: &[fontdb::Family::Monospace],
+                            ..fontdb::Query::default()
+                        })
+                        .is_none()
+                }),
+        };
         if let Some(family) = family {
             fonts.db_mut().set_monospace_family(family);
         }
-        Self(fonts)
+        Ok(Self(fonts))
     }
 
     pub fn from_data(monospace: &str, data: &[&[u8]]) -> Self {
@@ -176,5 +212,19 @@ impl Text {
         if self.swash.image_cache.len() > MAX_RASTER_ENTRIES {
             self.swash.image_cache.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_family_is_an_error() {
+        let empty = FontSystem::new_with_locale_and_db("en-US".into(), fontdb::Database::new());
+        let Err(error) = Fonts::with_family(empty, Some("no such font")) else {
+            panic!("expected a missing family");
+        };
+        assert_eq!(error.family, "no such font");
     }
 }

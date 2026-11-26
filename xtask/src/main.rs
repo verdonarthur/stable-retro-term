@@ -2,8 +2,10 @@
 
 mod check;
 mod doctor;
+mod package;
 mod perf;
 mod process;
+mod release;
 mod report;
 mod run;
 mod worktree;
@@ -31,6 +33,11 @@ enum Command {
     Check(check::Args),
     /// Compare release terminals with a matched native Wayland workload.
     Perf(perf::Args),
+    /// Build and check the release archive with dist. xtask never publishes.
+    Package(package::Args),
+    /// Verify, measure, and gate a release. xtask never publishes.
+    #[command(subcommand)]
+    Release(release::Command),
     /// Launch the plain Wayland terminal with development diagnostics.
     Run,
     /// Create, list, and remove task worktrees under `.worktrees/`.
@@ -73,6 +80,8 @@ fn main() -> ExitCode {
         Command::Doctor(args) => doctor::run(&args),
         Command::Check(args) => check::run(&args),
         Command::Perf(args) => perf::run(&args),
+        Command::Package(args) => package::run(&args),
+        Command::Release(command) => release::run(&command),
         Command::Run => run::run(),
         Command::Worktree(command) => worktree::run(&command),
     };

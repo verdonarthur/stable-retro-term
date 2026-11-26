@@ -1,0 +1,11 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.34.0"
+ci = []
+installers = []
+targets = ["x86_64-unknown-linux-gnu"]
+unix-archive = ".tar.xz"
+checksum = "sha256"
+create-release = false
