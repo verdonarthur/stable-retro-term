@@ -25,16 +25,15 @@ Base commit: `bc5f6ab` on `main`. Task 01 was done directly on `main` (setup exc
 | [05 — Performance harness and baseline gate](implementation/05-performance-baseline.md) | Harness available. Hardware baseline unverified. | 04 completed. |
 | [06 — Static CRT rendering](implementation/06-static-crt.md) | Implemented locally. Hardware verification pending. | 05 passed for the plain renderer. |
 | [07 — Text configuration and reload](implementation/07-text-configuration.md) | Implemented locally; smoke check and performance unverified | 06 completed. |
-| [08 — Native tabs and splits](implementation/08-tabs-and-splits.md) | Pending | 07 completed. |
-| [09 — Optional CRT animations](implementation/09-optional-animation.md) | Pending | 08 completed and resource suite passing. |
-| [10 — Automatic packaging and release](implementation/10-automatic-release.md) | Infrastructure implemented locally (uncommitted). Local checks and `package --check` pass. Perf gate not run; external setup pending. | User-approved reordering: runs now, in parallel with 07, after 02/05/06. Preset list wiring after 07/09 is follow-up F1. |
-| [11 — Settings UI and documentation polish](implementation/11-settings-and-polish.md) | Pending | 10 completed; higher-priority functionality and resource gates pass. |
+| [08 — Native tabs and splits](implementation/08-tabs-and-splits.md) | Implemented locally; `cargo xtask check` passed; smoke check and performance unverified | 07 completed. |
+| [09 — Optional CRT animations](implementation/09-optional-animation.md) | Implemented, perf unverified (flicker on drawn frames only; `animated-crt` preset experimental; `cargo xtask check` passed; Alacritty missing, `perf --preflight` exits 3) | 08 completed and resource suite passing (suite unverified for 06–08; see plan C1). |
+| [10 — Automatic packaging and release](implementation/10-automatic-release.md) | Release infrastructure implemented. Hardware performance gate and external setup pending. | User-approved reordering: runs now, in parallel with 07, after 02/05/06. Preset list wiring after 07/09 is follow-up F1. |
+| [11 — Settings UI and documentation polish](implementation/11-settings-and-polish.md) | Implemented locally; `cargo xtask check` passed; smoke check and performance unverified | 08 completed. The user approved running 11 before 10 and in parallel with 09. |
 
 Follow dependency order. This list is not authorization to implement all tasks.
-Task 11 is optional low-priority work after the initial release pipeline.
+Task 11 was optional low-priority work after the release pipeline; the user approved running it before 10 (plan D3).
 Task 09 may produce an explicit infeasibility finding; do not claim animation support if nothing passes.
-Task 10 may release only features/presets with valid passing evidence, unless a person sets the
-explicit, recorded `allow_failed_gate` override (see `docs/releasing.md`).
+Task 10 may release only features/presets with valid passing evidence.
 
 ## Fresh-session workflow
 

@@ -40,10 +40,15 @@ cargo build --locked --release -p retro-app --bin retro-term
 cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/preflight.json --preflight
 cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/static.json
 cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/plain.json --candidate-plain
+cargo xtask perf --candidate target/release/retro-term --baseline alacritty --suite benchmarks/scenarios.toml --output target/perf/animated.json --candidate-animated
 ```
 
 The candidate runs with `--config benchmarks/fixtures/retro-term.toml` (the suite key
 `candidate_config`), so a user configuration file does not change the result.
+`--candidate-animated` uses `benchmarks/fixtures/retro-term-animated.toml` (the suite key
+`animated_config`) and reports `candidate_mode = "animated-crt"`. The capture probe accepts a
+frame only when every probe point matches the same flicker gain. The animated preset is
+experimental; its performance is unverified until a valid report exists.
 
 Preflight checks the baseline version and records binary, source, suite, and font
 identity. It checks that the desktop portal advertises the keyboard, pointer,
@@ -110,3 +115,26 @@ with the gate limit. See [releasing](releasing.md).
 
 See the [renderer baseline decision](decisions/05-renderer-baseline.md) for
 the current result.
+
+## Multi-session scenarios (planned; harness not implemented)
+
+Task 08 defines these scenarios. The harness accepts only the 8 single-pane scenarios
+today. One tab with one pane renders the same scene as before tabs, so the
+single-pane suite stays valid.
+
+Matched rule: equal total visible cells and equal per-session grids in both legs;
+same fixture, font, scrollback, and cursor settings as the single-pane suite.
+Alacritty runs as one process with one window per session
+(`alacritty msg create-window -e <fixture>`); a hidden tab is a minimized window.
+
+| Scenario | Candidate | Baseline | Measures |
+| --- | --- | --- | --- |
+| `split-idle` | 1 window, 2 panes side by side, non-blinking, 4 s | 2 windows, same grids | No frames, CPU/RSS/GPU at idle |
+| `split-output` | 2 panes, 300-line bursts ×4 alternating | 2 windows | Output path with two visible sessions |
+| `hidden-output` | 2 tabs, hidden tab outputs 300 lines ×4, then reveal | 2 windows, one minimized, then restored | Hidden work is parse-only; reveal shows the final frame |
+| `pane-lifecycle` | 20× split + close | 20× create-window + close | Reaped children, RSS returns, no growth |
+
+The harness needs a separate suite or scenario list, a fixture server that accepts
+N connections with per-session identity, one marker color per session, key
+injection for the shortcuts, and a CRT probe that maps each pane rect through the
+window-level warp.

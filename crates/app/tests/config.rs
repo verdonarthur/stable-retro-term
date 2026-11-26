@@ -2,7 +2,8 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use retro_app::config::{
-    Changes, Config, ConfigError, Layer, Overrides, PRESETS, Source, load, reload, user_config_path,
+    Changes, Config, ConfigError, Layer, Overrides, PRESETS, SaveError, Source, load, reload, save,
+    user_config_path,
 };
 
 fn resolve(text: &str) -> Result<Config, ConfigError> {
@@ -21,6 +22,7 @@ fn temp_path(name: &str) -> PathBuf {
 fn defaults_match_the_base_behavior() {
     let config = Config::default();
     assert!(config.effects.crt);
+    assert!(!config.effects.animation);
     assert_eq!(config.preset, "static-crt");
     assert_eq!(config.font.family, "");
     assert_eq!((config.font.size, config.font.line_height), (14, 19));
@@ -139,7 +141,24 @@ fn unknown_preset_lists_known_names() {
 #[test]
 fn example_file_equals_defaults() {
     let example = include_str!("../../../assets/config.example.toml");
-    assert_eq!(resolve(example).unwrap(), Config::default());
+    let config = resolve(example).unwrap();
+    assert!(!config.effects.animation);
+    assert_eq!(config, Config::default());
+}
+
+#[test]
+fn animated_preset_enables_animation() {
+    let preset = "preset = \"animated-crt\"\n";
+    let config = resolve(preset).unwrap();
+    assert!(config.effects.crt && config.effects.animation);
+    let config = resolve(&format!("{preset}[effects]\nanimation = false\n")).unwrap();
+    assert!(config.effects.crt && !config.effects.animation);
+    let plain = Overrides {
+        plain: true,
+        ..Overrides::default()
+    };
+    let config = Config::resolve(Layer::parse(preset).unwrap(), &plain).unwrap();
+    assert!(!config.effects.crt);
 }
 
 #[test]
@@ -180,6 +199,8 @@ fn changes_classify_live_and_new_session_settings() {
     assert_eq!(Changes::between(&old, &old), Changes::default());
     let crt = changed(|c| c.effects.crt = false);
     assert!(crt.renderer && crt.layout && !crt.new_sessions);
+    let animation = changed(|c| c.effects.animation = true);
+    assert!(animation.renderer && animation.layout && !animation.new_sessions);
     let family = changed(|c| c.font.family = "Mono".into());
     assert!(family.renderer && family.layout);
     let size = changed(|c| c.font.size = 16);
@@ -208,4 +229,137 @@ fn config_round_trips_through_toml() {
     config.shell.args = vec!["-l".into()];
     let text = toml::to_string(&config).unwrap();
     assert_eq!(toml::from_str::<Config>(&text).unwrap(), config);
+}
+
+fn temp_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("retro-term-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn names(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn save_creates_a_missing_file_and_its_directory() {
+    let dir = temp_dir("save-create");
+    let path = dir.join("nested/retro-term/config.toml");
+    save(&path, None, "preset = \"plain\"\n").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "preset = \"plain\"\n"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn save_replaces_the_file_and_leaves_no_temp_file() {
+    let dir = temp_dir("save-replace");
+    let path = dir.join("config.toml");
+    std::fs::write(&path, "a = 1\n").unwrap();
+    save(&path, Some("a = 1\n"), "a = 2\n").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "a = 2\n");
+    assert_eq!(names(&dir), ["config.toml"]);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn save_keeps_file_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = temp_dir("save-mode");
+    let path = dir.join("config.toml");
+    std::fs::write(&path, "").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    save(&path, Some(""), "preset = \"plain\"\n").unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn save_writes_through_a_symlink() {
+    let dir = temp_dir("save-symlink");
+    std::fs::create_dir(dir.join("real")).unwrap();
+    std::fs::write(dir.join("real/config.toml"), "old\n").unwrap();
+    let link = dir.join("config.toml");
+    std::os::unix::fs::symlink(dir.join("real/config.toml"), &link).unwrap();
+    save(&link, Some("old\n"), "new\n").unwrap();
+    assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("real/config.toml")).unwrap(),
+        "new\n"
+    );
+    assert_eq!(names(&dir.join("real")), ["config.toml"]);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn save_refuses_an_externally_changed_file() {
+    let dir = temp_dir("save-changed");
+    let path = dir.join("config.toml");
+    std::fs::write(&path, "b\n").unwrap();
+    assert!(matches!(
+        save(&path, Some("a\n"), "c\n"),
+        Err(SaveError::Changed)
+    ));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "b\n");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn save_refuses_a_file_created_since_open() {
+    let dir = temp_dir("save-created");
+    let path = dir.join("config.toml");
+    std::fs::write(&path, "b\n").unwrap();
+    assert!(matches!(save(&path, None, "c\n"), Err(SaveError::Changed)));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "b\n");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn save_refuses_a_file_deleted_since_open() {
+    let dir = temp_dir("save-deleted");
+    let path = dir.join("config.toml");
+    assert!(matches!(
+        save(&path, Some("a\n"), "c\n"),
+        Err(SaveError::Changed)
+    ));
+    assert!(!path.exists());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn save_failure_keeps_the_old_file() {
+    let dir = temp_dir("save-failure");
+    let target = dir.join("config.toml");
+    std::fs::create_dir(&target).unwrap();
+    assert!(matches!(save(&target, None, "x\n"), Err(SaveError::Io(_))));
+    assert!(target.is_dir());
+    assert_eq!(names(&dir), ["config.toml"]);
+
+    let file = dir.join("file");
+    std::fs::write(&file, "keep\n").unwrap();
+    assert!(matches!(
+        save(&file.join("config.toml"), None, "x\n"),
+        Err(SaveError::Io(_))
+    ));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "keep\n");
+
+    #[cfg(unix)]
+    {
+        let link = dir.join("dangling.toml");
+        std::os::unix::fs::symlink(dir.join("missing.toml"), &link).unwrap();
+        assert!(matches!(save(&link, None, "x\n"), Err(SaveError::Io(_))));
+        assert!(!dir.join("missing.toml").exists());
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }

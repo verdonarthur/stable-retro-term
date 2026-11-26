@@ -9,16 +9,20 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_PRESET: &str = "static-crt";
-pub const PRESETS: [(&str, &str); 2] = [
+pub const PRESETS: [(&str, &str); 3] = [
     (
         "static-crt",
         include_str!("../../../assets/presets/static-crt.toml"),
     ),
     ("plain", include_str!("../../../assets/presets/plain.toml")),
+    (
+        "animated-crt",
+        include_str!("../../../assets/presets/animated-crt.toml"),
+    ),
 ];
 
-const FONT_SIZE: std::ops::RangeInclusive<u16> = 6..=72;
-const MAX_SCROLLBACK_LINES: usize = 100_000;
+pub const FONT_SIZE: std::ops::RangeInclusive<u16> = 6..=72;
+pub const MAX_SCROLLBACK_LINES: usize = 100_000;
 
 /// The resolved and validated settings. The only settings model of the application.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +39,8 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct Effects {
     pub crt: bool,
+    /// Experimental CRT flicker. Needs `crt`.
+    pub animation: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,7 +74,10 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             preset: DEFAULT_PRESET.into(),
-            effects: Effects { crt: true },
+            effects: Effects {
+                crt: true,
+                animation: false,
+            },
             font: Font {
                 family: String::new(),
                 size: 14,
@@ -101,6 +110,7 @@ pub struct Layer {
 #[serde(deny_unknown_fields)]
 pub struct EffectsLayer {
     pub crt: Option<bool>,
+    pub animation: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -137,6 +147,7 @@ impl Layer {
             }
         }
         set(&mut config.effects.crt, self.effects.crt);
+        set(&mut config.effects.animation, self.effects.animation);
         set(&mut config.font.family, self.font.family);
         set(&mut config.font.size, self.font.size);
         set(&mut config.font.line_height, self.font.line_height);
@@ -369,3 +380,76 @@ impl fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
+
+/// Replaces the file at `path` with `text` when it still holds `expected` (`None`: no file).
+/// Follows a symlink to its target. On any error the old file stays unchanged.
+pub fn save(path: &Path, expected: Option<&str>, text: &str) -> Result<(), SaveError> {
+    let target = if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_symlink()) {
+        fs::canonicalize(path)?
+    } else {
+        path.to_path_buf()
+    };
+    let current = match fs::read_to_string(&target) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        result => Some(result?),
+    };
+    if current.as_deref() != expected {
+        return Err(SaveError::Changed);
+    }
+    let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a file path").into());
+    };
+    fs::create_dir_all(parent)?;
+    let mut temp_name = OsString::from(".");
+    temp_name.push(name);
+    temp_name.push(format!(".{}.tmp", std::process::id()));
+    let temp = parent.join(temp_name);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)?;
+    let written = (|| {
+        io::Write::write_all(&mut file, text.as_bytes())?;
+        if current.is_some() {
+            file.set_permissions(fs::metadata(&target)?.permissions())?;
+        }
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temp, &target)
+    })();
+    if let Err(error) = written {
+        let _ = fs::remove_file(&temp);
+        return Err(error.into());
+    }
+    if let Ok(directory) = fs::File::open(parent) {
+        let _ = directory.sync_all();
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+pub enum SaveError {
+    /// The file on disk is not the text read when the panel opened.
+    Changed,
+    Io(io::Error),
+}
+
+impl From<io::Error> for SaveError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl fmt::Display for SaveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Changed => write!(
+                f,
+                "the file changed on disk; close the panel, press Ctrl+Shift+R, and open it again"
+            ),
+            Self::Io(error) => write!(f, "cannot save: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for SaveError {}

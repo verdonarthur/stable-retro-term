@@ -298,6 +298,7 @@ fn measure(args: &MeasureArgs) -> Outcome {
             perf::run(&perf::Args {
                 candidate: binary.clone(),
                 candidate_plain: preset.candidate_plain,
+                candidate_animated: false,
                 baseline: args.baseline.clone(),
                 suite: gate.suite_path(&args.gate),
                 output: output.clone(),

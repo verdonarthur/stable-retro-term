@@ -130,3 +130,31 @@ fn driver_headless_regressions() {
         String::from_utf8_lossy(&result.stderr)
     );
 }
+
+#[test]
+fn animated_candidate_mode_is_reported_and_exclusive() {
+    let temp = tempfile::tempdir().unwrap();
+    let report = temp.path().join("report.json");
+    let missing = temp.path().join("no-such-terminal");
+    let run = |modes: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .current_dir(root())
+            .arg("perf")
+            .arg("--candidate")
+            .arg(&missing)
+            .arg("--baseline")
+            .arg(&missing)
+            .args(["--suite", "benchmarks/scenarios.toml", "--output"])
+            .arg(&report)
+            .arg("--preflight")
+            .args(modes)
+            .output()
+            .unwrap()
+            .status
+            .code()
+    };
+    assert_eq!(run(&["--candidate-plain", "--candidate-animated"]), Some(2));
+    assert_eq!(run(&["--candidate-animated"]), Some(3));
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_eq!(report["candidate_mode"], "animated-crt");
+}

@@ -48,12 +48,8 @@ The standard checks run without a display. Display tests use
 
 ## Run the plain terminal
 
-Use a native Wayland session on Linux. Install the Wayland client library and
-`libxkbcommon` at runtime, a Vulkan loader and driver, and a system monospace font
-with fallback fonts for the scripts you use. Clipboard copy and paste require the
-compositor to expose `ext-data-control` or `wlr-data-control`. Use Ctrl+Shift+C to
-copy the selection and Ctrl+Shift+V to paste. The paste action accepts up to 8 MiB
-of UTF-8 text.
+Use a native Wayland session on Linux. The runtime requirements, keyboard shortcuts, and mouse
+actions are in [usage](usage.md).
 
 ```sh
 cargo build --locked --release -p retro-app --bin retro-term

@@ -138,6 +138,7 @@ class Wayland:
 
     crt = False
     crt_area = None
+    gains = (1.0,)
 
     def observe(self, color, grid, timeout, typed=None):
         end = time.monotonic() + timeout
@@ -148,7 +149,7 @@ class Wayland:
                 received = True
                 previous = self.crt_area
                 area = previous[1] if previous is not None and previous[0] == grid else None
-                evidence = visible(frame, color, grid, crt=self.crt, area=area)
+                evidence = visible(frame, color, grid, crt=self.crt, area=area, gains=self.gains)
                 if evidence is not None and (typed is None or typed_cell(frame, evidence, grid, typed)):
                     if self.crt:
                         self.crt_area = grid, evidence["area"]
@@ -166,9 +167,9 @@ class Wayland:
                 continue
             received = True
             if evidence.get("crt"):
-                colors = crt_colors(color)
                 if any(all(pixel(frame, x + int(width * fraction), row) in colors
                            for fraction in (0.5, 0.8))
+                       for colors in (crt_colors(color, gain) for gain in self.gains)
                        for row in range(y, y + height)):
                     return
                 continue
@@ -231,8 +232,11 @@ class Wayland:
                   (self.session, {"finish": self.v("b", True)}, 0.0, float(-pixels)))
 
 
-def visible(frame, color, grid, crt=False, area=None):
-    """Find the colored grid perimeter and probe the cursor cell inside it."""
+def visible(frame, color, grid, crt=False, area=None, gains=(1.0,)):
+    """Find the colored grid perimeter and probe the cursor cell inside it.
+
+    With several CRT flicker gains, every probe point must match the same gain.
+    """
     width, height, stride, offset, pixels = frame
     rows, cols, grid_width, grid_height = grid
     if min(rows, cols) < 6 or not grid_width or not grid_height:
@@ -243,11 +247,17 @@ def visible(frame, color, grid, crt=False, area=None):
     if not cell_w or not cell_h or cell_w * cols != grid_width or cell_h * rows != grid_height:
         return None
     if crt:
-        if area is not None:
-            evidence = crt_evidence(frame, color, grid, area)
+        for gain in gains:
+            evidence = None
+            if area is not None:
+                evidence = crt_evidence(frame, color, grid, area, gain)
+            if evidence is None:
+                evidence = visible_crt(frame, color, grid, gain)
             if evidence is not None:
+                if len(gains) > 1:
+                    evidence["gain"] = gain
                 return evidence
-        return visible_crt(frame, color, grid)
+        return None
     pattern = bytes((color[2], color[1], color[0]))
     # The X byte is padding. Use repeated RGB samples at aligned pixel offsets.
     count = 0
@@ -292,7 +302,8 @@ def text_visible(frame, x, y, cell_w, cell_h, background):
 def typed_cell(frame, evidence, grid, typed):
     column, color = typed
     if evidence.get("crt"):
-        return crt_glyph(frame, evidence["area"], grid, 3, column - 1, color)
+        return crt_glyph(frame, evidence["area"], grid, 3, column - 1, color,
+                         evidence.get("gain", 1.0))
     x, y, width, height = evidence["area"]
     rows, cols, _, _ = grid
     cell_w, cell_h = width // cols, height // rows
@@ -305,8 +316,12 @@ def typed_cell(frame, evidence, grid, typed):
                for dy in range(cell_h) for dx in range(cell_w))
 
 
-def crt_colors(color):
-    """sRGB readback of the shader's fixed gains and two scanline phases."""
+# Copied from FLICKER_GAINS in crates/renderer/src/effects.rs.
+FLICKER_GAINS = (1.0, 0.975, 0.955)
+
+
+def crt_colors(color, gain=1.0):
+    """sRGB readback of the shader's fixed gains, one flicker gain, and two scanline phases."""
     def srgb(value, gain):
         encoded = value / 255
         linear = encoded / 12.92 if encoded <= 0.04045 else ((encoded + 0.055) / 1.055) ** 2.4
@@ -314,7 +329,7 @@ def crt_colors(color):
         encoded = 12.92 * linear if linear <= 0.0031308 else 1.055 * linear ** (1 / 2.4) - 0.055
         return round(encoded * 255)
 
-    return tuple(bytes(srgb(value, gain * scan) for value, gain in zip(
+    return tuple(bytes(srgb(value, tint * scan * gain) for value, tint in zip(
         reversed(color), (1.0, 1.0, 0.95))) for scan in (1.0, 0.88))
 
 
@@ -330,10 +345,10 @@ def crt_point(area, fx, fy):
             int(y + height * (1 + sy * factor / axis_extent) / 2))
 
 
-def crt_glyph(frame, area, grid, row, col, color):
+def crt_glyph(frame, area, grid, row, col, color, gain=1.0):
     rows, cols, width, height = grid
     cell_w, cell_h = width // cols, height // rows
-    colors = crt_colors(color)
+    colors = crt_colors(color, gain)
     samples = [
         pixel(frame, *crt_point(area, (col + dx / cell_w) / cols,
                                 (row + dy / cell_h) / rows))
@@ -347,10 +362,10 @@ def crt_glyph(frame, area, grid, row, col, color):
     )
 
 
-def visible_crt(frame, color, grid):
+def visible_crt(frame, color, grid, gain=1.0):
     width, height, stride, offset, pixels = frame
     _, _, grid_width, grid_height = grid
-    marker = crt_colors(color)[0]
+    marker = crt_colors(color, gain)[0]
     left, top, right, bottom = width, height, 0, 0
     for y in range(height):
         start = offset + y * stride
@@ -373,16 +388,16 @@ def visible_crt(frame, color, grid):
     if not (0.90 * grid_width <= area[2] <= grid_width
             and 0.90 * grid_height <= area[3] <= grid_height):
         return None
-    return crt_evidence(frame, color, grid, area)
+    return crt_evidence(frame, color, grid, area, gain)
 
 
-def crt_evidence(frame, color, grid, area):
+def crt_evidence(frame, color, grid, area, gain=1.0):
     rows, cols, _, _ = grid
-    colors = crt_colors(color)
+    colors = crt_colors(color, gain)
     if not all(pixel(frame, *crt_point(area, fx, fy)) in colors
                for fx in (0.2, 0.8) for fy in (0.5 / rows, 1 - 0.5 / rows)):
         return None
-    if not all(crt_glyph(frame, area, grid, 2, col, color) for col in range(5)):
+    if not all(crt_glyph(frame, area, grid, 2, col, color, gain) for col in range(5)):
         return None
     cursor = pixel(frame, *crt_point(area, 1.5 / cols, 1.5 / rows))
     return {"area": area, "cursor": cursor not in colors, "crt": True}
