@@ -6,8 +6,8 @@ use std::time::Instant;
 
 use retro_renderer::{Frame, SurfaceRenderer};
 use retro_terminal::{
-    CursorShape, GridSize, Input, Position, Session, SessionError, SessionId, SessionOptions,
-    TitleChange,
+    CursorShape, GridSize, Input, Position, Program, Session, SessionError, SessionId,
+    SessionOptions, TitleChange,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
@@ -31,6 +31,10 @@ enum Event {
 }
 
 pub fn run(development: bool) -> AppResult<()> {
+    run_with_program(development, None)
+}
+
+pub fn run_with_program(development: bool, program: Option<Program>) -> AppResult<()> {
     use winit::platform::wayland::EventLoopBuilderExtWayland;
     let events = EventLoop::<Event>::with_user_event()
         .with_wayland()
@@ -40,6 +44,7 @@ pub fn run(development: bool) -> AppResult<()> {
         state: None,
         error: None,
         development,
+        program,
     };
     events.run_app(&mut app)?;
     app.error.map_or(Ok(()), Err)
@@ -50,6 +55,7 @@ struct App {
     state: Option<State>,
     error: Option<Box<dyn Error>>,
     development: bool,
+    program: Option<Program>,
 }
 
 impl App {
@@ -88,6 +94,7 @@ impl State {
         events: &ActiveEventLoop,
         proxy: EventLoopProxy<Event>,
         development: bool,
+        program: Option<Program>,
     ) -> AppResult<Self> {
         let window = Arc::new(
             events.create_window(
@@ -109,7 +116,7 @@ impl State {
         let session = Session::spawn(
             SessionOptions {
                 size: grid,
-                program: None,
+                program,
                 working_directory: None,
                 scrollback_lines: 10_000,
             },
@@ -396,8 +403,13 @@ impl ApplicationHandler<Event> for App {
     fn resumed(&mut self, events: &ActiveEventLoop) {
         let result = match &mut self.state {
             Some(state) => state.resize(state.window.inner_size()),
-            None => State::new(events, self.proxy.clone(), self.development)
-                .map(|state| self.state = Some(state)),
+            None => State::new(
+                events,
+                self.proxy.clone(),
+                self.development,
+                self.program.take(),
+            )
+            .map(|state| self.state = Some(state)),
         };
         if let Err(error) = result {
             self.close(events, Some(error));

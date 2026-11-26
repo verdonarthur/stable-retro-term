@@ -1,0 +1,46 @@
+name: Performance
+
+on:
+  workflow_call:
+    inputs:
+      gpu_label:
+        description: Runner label unique to the physical GPU
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retro-term-performance-${{ inputs.gpu_label }}
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    if: github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on:
+      - self-hosted
+      - Linux
+      - ${{ inputs.gpu_label }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the release candidate
+        run: cargo build --locked --release -p retro-app --bin retro-term
+      - name: Check measurement prerequisites
+        run: >-
+          cargo xtask perf --candidate target/release/retro-term --baseline alacritty
+          --suite benchmarks/scenarios.toml --output target/perf/preflight.json --preflight
+      - name: Compare against Alacritty
+        run: >-
+          cargo xtask perf --candidate target/release/retro-term --baseline alacritty
+          --suite benchmarks/scenarios.toml --output target/perf/report.json
+      - name: Upload the comparison and preflight reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: performance-reports
+          path: target/perf/
+          retention-days: 14
