@@ -11,7 +11,7 @@ Release Retro Term v0.1.0 for Linux x86-64 through the workflow in [Releasing](.
 
 1. Run `cargo xtask check` from this worktree.
 2. Merge the bootstrap change after review.
-3. Install the release GitHub App and configure the repository settings in the external setup checklist. Leave `RETRO_GPU_LABEL` unset for v0.1.0.
+3. Configure the `RELEASE_TOKEN` repository Actions secret and the repository settings in the external setup checklist. Leave `RETRO_GPU_LABEL` unset for v0.1.0.
 4. Enable Release Please. A push to `main` starts it. Review and merge the generated v0.1.0 release PR to create the tag and draft.
 5. Dispatch the release workflow from `main` for that tag and SHA with `dry_run: true` and `allow_failed_gate: true`. Confirm that verification, packaging, and the gate pass and that the gate records the override.
 6. Dispatch again with `dry_run: false` and the same override. Confirm that the published release has the Linux archive, checksum, and notice about missing performance evidence. Remove the first-release version override.
@@ -23,4 +23,4 @@ Release Retro Term v0.1.0 for Linux x86-64 through the workflow in [Releasing](.
 - Changed files: Release Please configuration, release workflow, and this plan.
 - Checks: `cargo xtask check` passed with access to the Cargo advisory database. One ignored test did not run.
 - Release packaging, GPU measurement, and publication are pending.
-- Blockers: GitHub App setup remains pending. The user approved skipping GPU measurement for v0.1.0 using the manual override.
+- Blockers: The `RELEASE_TOKEN` secret and workflow enablement are pending. The user approved skipping GPU measurement for v0.1.0 using the manual override.
