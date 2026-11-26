@@ -64,6 +64,18 @@ class Counters(unittest.TestCase):
             with self.subTest(pairs=pairs, resolution=resolution):
                 self.assertEqual(compare(pairs, "gpu_ns", resolution)["status"], expected)
 
+    def test_release_limit_boundary(self):
+        def pair(a, b):
+            def result(value):
+                return {"valid": True, "metrics": {"gpu_ns": value},
+                        "engines": {"amdgpu:0000:63:00.0": {"gfx": value}}}
+
+            return {"candidate": result(a), "baseline": result(b)}
+
+        self.assertEqual(compare([pair(120, 100)], "gpu_ns", 0, (6, 5))["status"], "passed")
+        self.assertEqual(compare([pair(121, 100)], "gpu_ns", 0, (6, 5))["status"], "failed")
+        self.assertEqual(compare([pair(121, 100)], "gpu_ns", 0)["status"], "passed")
+
     def test_negligible_cpu_passes(self):
         def pair(a, b):
             def result(value):

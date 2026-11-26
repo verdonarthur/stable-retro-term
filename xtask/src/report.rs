@@ -55,6 +55,9 @@ impl Step {
 pub struct Report {
     pub command: String,
     pub exit_code: u8,
+    /// A manual override allowed failed steps (see `release gate --allow-failed-gate`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub overridden: bool,
     pub steps: Vec<Step>,
 }
 
@@ -65,6 +68,7 @@ impl Report {
         Self {
             command: command.to_owned(),
             exit_code,
+            overridden: false,
             steps,
         }
     }

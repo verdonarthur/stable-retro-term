@@ -3,3 +3,4 @@
 cargo-deny = "0.22.1"
 actionlint = "1.7.12"
 zizmor = "1.33.1"
+dist = "0.34.0"

@@ -82,10 +82,11 @@ DRM clients by PCI device and client ID. A driver may omit an engine until the
 client first uses it, so a missing engine counts as 0 ns. Workload latency includes the shared
 capture path. Missing or inconsistent evidence prevents a pass.
 Each metric is gated on the median pair. The median pair passes when its
-uncertainty range is wholly within 1.40, fails when wholly above it, and is
-unverified otherwise. With an even pair count, both middle pairs must support the same decision.
+uncertainty range is wholly within the limit, fails when wholly above it, and is
+unverified otherwise. The limit is 1.40 (`--limit 7/5`, the default). The release
+gate uses `--limit 6/5` (1.20). Every report records the limit as `"limit": [N, D]`. With an even pair count, both middle pairs must support the same decision.
 When both terminals use less than 1 ms of CPU in an interval, the CPU
-comparison passes as negligible, because scheduler noise exceeds the 1.40 ratio.
+comparison passes as negligible, because scheduler noise exceeds the ratio limit.
 
 Measured runs return 0 only when every required scenario passes. Exit 1 covers
 failed or unverified comparisons, exit 2 covers invalid command or suite input,
@@ -100,6 +101,12 @@ Assign a unique runner label to the physical GPU and pass it as `gpu_label`.
 Run the runner with access to the controlled desktop session and the prerequisites
 above. The reusable workflow serializes measurements by label and uploads
 available JSON reports. Portal access must be available for the job's session.
+
+With the `package_artifact`, `sha`, and `tag` inputs, the workflow measures the
+packaged release binary instead of a source build. It runs
+`cargo xtask release measure`, which checks the binary checksum against the
+package identity and measures every preset in `benchmarks/release-gate.toml`
+with the gate limit. See [releasing](releasing.md).
 
 See the [renderer baseline decision](decisions/05-renderer-baseline.md) for
 the current result.

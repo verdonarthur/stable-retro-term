@@ -13,7 +13,7 @@ METRICS = {
     # DRM reports ns, but the driver API does not promise ns precision.
     "gpu_ns": None,
 }
-# Below this, scheduler noise exceeds the 1.40 ratio, so both legs pass as negligible.
+# Below this, scheduler noise exceeds any ratio limit, so both legs pass as negligible.
 CPU_FLOOR_NS = 1_000_000
 
 
@@ -146,7 +146,8 @@ def summarize(samples, from_launch=False, complete=True):
     }, engines
 
 
-def compare(pairs, metric, gpu_resolution=None):
+def compare(pairs, metric, gpu_resolution=None, limit=(7, 5)):
+    numerator, denominator = limit
     resolution = METRICS[metric] if metric != "gpu_ns" else gpu_resolution
     intervals = []
     ratios = []
@@ -169,10 +170,10 @@ def compare(pairs, metric, gpu_resolution=None):
         if resolution > 0 and b <= resolution:
             return {"status": "unverified", "reason": "baseline at or below counter resolution"}
         ratios.append(a / b if b else None)
-        # Compare integer bounds to 7/5, including the exact boundary.
+        # Compare integer bounds to the limit, including the exact boundary.
         intervals.append((
-            5 * max(0, a - resolution) - 7 * (b + resolution),
-            5 * (a + resolution) - 7 * max(0, b - resolution),
+            denominator * max(0, a - resolution) - numerator * (b + resolution),
+            denominator * (a + resolution) - numerator * max(0, b - resolution),
         ))
     # Gate on the median pair. For an even count, take the less favourable middle pair.
     status = "unverified"

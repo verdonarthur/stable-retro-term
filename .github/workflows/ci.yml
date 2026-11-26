@@ -74,3 +74,27 @@ jobs:
           name: deny-logs
           path: target/xtask/
           retention-days: 7
+
+  package:
+    name: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read pinned tools
+        id: tools
+        run: echo "dist=$(sed -n 's/^dist = "\(.*\)"$/\1/p' tools.toml)" >> "$GITHUB_OUTPUT"
+      # install-action does not support cargo-dist, so build the pinned version.
+      - name: Install dist
+        env:
+          VERSION: ${{ steps.tools.outputs.dist }}
+        run: cargo install --locked "cargo-dist@${VERSION}"
+      - run: cargo xtask package --check
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-logs
+          path: target/xtask/
+          retention-days: 7

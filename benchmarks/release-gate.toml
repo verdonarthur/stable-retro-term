@@ -1,0 +1,13 @@
+version = 1
+# Ratio limit as numerator / denominator: 6/5 = 1.20.
+limit = [6, 5]
+# Relative to this file.
+suite = "scenarios.toml"
+
+[[presets]]
+name = "static-crt"
+candidate_plain = false
+
+[[presets]]
+name = "plain"
+candidate_plain = true
