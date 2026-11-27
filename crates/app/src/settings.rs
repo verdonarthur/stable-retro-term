@@ -229,6 +229,18 @@ struct Editor {
     file: Config,
 }
 
+pub struct Category {
+    pub header: Vec<String>,
+    pub items: Vec<(String, bool)>,
+    pub footer: CategoryFooter,
+}
+
+pub struct CategoryFooter {
+    pub details: Vec<String>,
+    pub status: Option<String>,
+    pub help: &'static str,
+}
+
 pub struct Settings {
     path: Option<PathBuf>,
     original: Option<String>,
@@ -440,6 +452,52 @@ impl Settings {
         self.status = status;
     }
 
+    /// The editable category, with all its items in keyboard navigation order.
+    pub fn category(&self) -> Option<Category> {
+        let editor = self.editor.as_ref()?;
+        if self.profile_cursor.is_some() {
+            return None;
+        }
+        let group = category(self.selected);
+        let mut header = vec![
+            " Settings".into(),
+            String::new(),
+            format!(" {group}  [Tab switches category]"),
+        ];
+        if self.selected == 0 {
+            header.push(" Space opens the profile list.".into());
+        }
+        let items = (0..ROW_COUNT)
+            .filter(|&index| category(index) == group)
+            .map(|index| {
+                let (label, value) = if let Some(row) = row(index) {
+                    let mut value = if row.key == "preset" {
+                        self.profile_label()
+                    } else {
+                        (row.value)(&self.preview)
+                    };
+                    if let Some(option) = (row.overridden)(&self.overrides) {
+                        value = format!("{value} ({option}; file: {})", (row.value)(&editor.file));
+                    }
+                    (row.label, value)
+                } else {
+                    let (key, label, default) = CONTROLS[index - FIRST_CONTROL];
+                    (label, format!("{}%", level(&self.preview, key, default)))
+                };
+                (field(label, &value), index == self.selected)
+            })
+            .collect();
+        Some(Category {
+            header,
+            items,
+            footer: CategoryFooter {
+                details: self.file_details(),
+                status: self.status_line(),
+                help: " Up/Down select  Left/Right change  Enter save  Esc cancel",
+            },
+        })
+    }
+
     /// The panel text, one entry per line, with the selected row marked.
     pub fn lines(&self) -> Vec<(String, bool)> {
         if let Some(index) = self.profile_cursor {
@@ -457,61 +515,51 @@ impl Settings {
             lines.push((" Up/Down select  Enter choose  Esc back".into(), false));
             return lines;
         }
-        let line = |text: String| (text, false);
-        let field = |label: &str, value: String| format!(" {label:<LABEL_WIDTH$} {value} ");
-        let mut lines = vec![line(" Settings".into()), line(String::new())];
-        if let Some(editor) = &self.editor {
-            let group = category(self.selected);
-            lines.push(line(format!(" {group}  [Tab switches category]")));
-            if self.selected == 0 {
-                lines.push(line(" Space opens the profile list.".into()));
-            }
-            let matching: Vec<_> = (0..ROW_COUNT)
-                .filter(|&index| category(index) == group)
+        let unselected = |text| (text, false);
+        if let Some(category) = self.category() {
+            return category
+                .header
+                .into_iter()
+                .map(unselected)
+                .chain(category.items)
+                .chain(std::iter::once(unselected(String::new())))
+                .chain(category.footer.details.into_iter().map(unselected))
+                .chain(std::iter::once(unselected(String::new())))
+                .chain(category.footer.status.into_iter().map(unselected))
+                .chain(std::iter::once(unselected(category.footer.help.into())))
                 .collect();
-            let selected = matching
-                .iter()
-                .position(|&index| index == self.selected)
-                .unwrap_or(0);
-            let page = selected / 6 * 6;
-            for &index in matching.iter().skip(page).take(6) {
-                let (label, value) = if let Some(row) = row(index) {
-                    let mut value = if row.key == "preset" {
-                        self.profile_label()
-                    } else {
-                        (row.value)(&self.preview)
-                    };
-                    if let Some(option) = (row.overridden)(&self.overrides) {
-                        value = format!("{value} ({option}; file: {})", (row.value)(&editor.file));
-                    }
-                    (row.label, value)
-                } else {
-                    let (key, label, default) = CONTROLS[index - FIRST_CONTROL];
-                    (label, format!("{}%", level(&self.preview, key, default)))
-                };
-                lines.push((field(label, value), index == self.selected));
-            }
-            lines.push(line(String::new()));
         }
-        let family = Some(self.preview.font.family.clone())
-            .filter(|family| !family.is_empty())
-            .unwrap_or_else(|| "system monospace".into());
-        lines.push(line(field("Font family", family)));
+        let mut lines = vec![unselected(" Settings".into()), unselected(String::new())];
+        lines.extend(self.file_details().into_iter().map(unselected));
+        lines.push(unselected(String::new()));
+        lines.extend(self.status_line().into_iter().map(unselected));
+        lines.push(unselected(" Esc close".into()));
+        lines
+    }
+
+    fn file_details(&self) -> Vec<String> {
+        let family = self.preview.font.family.as_str();
+        let family = if family.is_empty() {
+            "system monospace"
+        } else {
+            family
+        };
         let path = self
             .path
             .as_ref()
             .map_or_else(|| "none".into(), |path| path.display().to_string());
-        lines.push(line(field("File", path)));
-        lines.push(line(" Edit the file for shell settings.".into()));
-        lines.push(line(String::new()));
-        if !self.status.is_empty() {
-            lines.push(line(format!(" {} ", self.status)));
-        }
-        lines.push(line(if self.editor.is_some() {
-            " Up/Down select  Left/Right change  Enter save  Esc cancel".into()
-        } else {
-            " Esc close".into()
-        }));
-        lines
+        vec![
+            field("Font family", family),
+            field("File", &path),
+            " Edit the file for shell settings.".into(),
+        ]
     }
+
+    fn status_line(&self) -> Option<String> {
+        (!self.status.is_empty()).then(|| format!(" {} ", self.status))
+    }
+}
+
+fn field(label: &str, value: &str) -> String {
+    format!(" {label:<LABEL_WIDTH$} {value} ")
 }

@@ -1057,7 +1057,12 @@ impl State {
         }
         if let Some(settings) = &self.settings {
             let cell = [u32::from(self.cell.0), u32::from(self.cell.1)];
-            ui::full_panel(&mut scene, self.window_rect(), &settings.lines(), cell, 0);
+            let window = self.window_rect();
+            if let Some(category) = settings.category() {
+                ui::settings_category(&mut scene, window, &category, cell);
+            } else {
+                ui::full_panel(&mut scene, window, &settings.lines(), cell, 0);
+            }
         }
         if let Some((selected, anchor)) = self.menu {
             let cell = [u32::from(self.cell.0), u32::from(self.cell.1)];
