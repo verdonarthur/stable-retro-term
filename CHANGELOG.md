@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.0](https://github.com/verdonarthur/stable-retro-term/compare/v0.1.0...v0.1.0) (2026-11-27)
+
+
+### Features
+
+* **release:** Publish an x86_64 AppImage ([bcdc0c1](https://github.com/verdonarthur/stable-retro-term/commit/bcdc0c14b29448eb33cfd7754e6c635ba557444f))
+* **release:** Publish an x86_64 AppImage ([052bdca](https://github.com/verdonarthur/stable-retro-term/commit/052bdcafa532e9981c5cbba79777a93c60f6f7ba))
+
+
+### Bug Fixes
+
+* **app:** Make Quick Settings scrolling visible ([3263130](https://github.com/verdonarthur/stable-retro-term/commit/32631300ace8426adf3bb692d03c6c959a4bfa4e))
+* **app:** Make Quick Settings scrolling visible ([c4ddf9f](https://github.com/verdonarthur/stable-retro-term/commit/c4ddf9f47957ac0417c13efbeed5e3c41443e1e2))
+
 ## [0.1.0](https://github.com/verdonarthur/stable-retro-term/compare/v0.1.0...v0.1.0) (2026-11-26)
 
 
