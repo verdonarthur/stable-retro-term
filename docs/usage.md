@@ -1,6 +1,6 @@
 # Usage
 
-retro-term runs on Linux in a native Wayland session. It does not run under X11, macOS, or Windows.
+Stable Retro Term runs on Linux in a native Wayland session. It does not run under X11, macOS, or Windows.
 
 ## Requirements
 
@@ -8,6 +8,21 @@ retro-term runs on Linux in a native Wayland session. It does not run under X11,
 - A Vulkan loader and driver.
 - A system monospace font, plus fallback fonts for the scripts you use.
 - For clipboard copy and paste: a compositor that exposes `ext-data-control` or `wlr-data-control`.
+
+## Run the AppImage
+
+On Ubuntu 24.04 x86_64 with a native Wayland session, download the AppImage
+and its `.sha256` file from [GitHub Releases](https://github.com/verdonarthur/stable-retro-term/releases).
+From the download directory, substitute the release version for `X.Y.Z`.
+
+```sh
+image=retro-term-vX.Y.Z-x86_64.AppImage
+sha256sum -c "$image.sha256"
+chmod +x "$image"
+./"$image"
+```
+
+If FUSE is unavailable, run `APPIMAGE_EXTRACT_AND_RUN=1 ./"$image"`.
 
 ## Keyboard shortcuts
 
@@ -71,7 +86,7 @@ The rules for saving are in [configuration](configuration.md#settings-panel).
 - Linux with native Wayland only. Only x86_64 is tested.
 - Clipboard copy and paste need `ext-data-control` or `wlr-data-control`.
 - Key bindings and the ANSI palette use built-in values.
-- retro-term does not watch the configuration file. Press Ctrl+Shift+R or save in the settings panel.
+- Stable Retro Term does not watch the configuration file. Press Ctrl+Shift+R or save in the settings panel.
 - Scrollback and shell settings apply to new panes and tabs only.
 - Ctrl+Shift+W closes a pane without confirmation.
 - Performance against the 1.40× Alacritty phase limit is unverified for static CRT, configuration,

@@ -29,7 +29,7 @@ use crate::settings::{Outcome, Settings};
 use crate::tabs::Tabs;
 use crate::ui;
 
-const TITLE: &str = "Retro Terminal";
+const TITLE: &str = "Stable Retro Term";
 const INITIAL_SIZE: LogicalSize<u32> = LogicalSize::new(800, 500);
 const MIN_PANE_CELLS: [u32; 2] = [10, 3];
 type AppResult<T> = Result<T, Box<dyn Error>>;

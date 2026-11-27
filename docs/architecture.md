@@ -1,6 +1,6 @@
 # Architecture
 
-retro-term is a terminal emulator with a retro CRT appearance.
+Stable Retro Term is a terminal emulator with a retro CRT appearance.
 It reuses an existing terminal engine and focuses its own work on rendering and user experience.
 
 ## Principles

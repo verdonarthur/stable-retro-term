@@ -1,7 +1,7 @@
 # Releasing
 
 Releases are automatic after a release PR merge. Release Please proposes the version and changelog,
-`dist` builds the archive, the packaged binary is measured, a gate binds the reports to that binary,
+`dist` builds the archive, xtask wraps its binary in an AppImage, a gate binds the reports to that binary,
 and one job publishes the existing draft release. Nothing in the repository publishes from a local machine.
 
 ## Flow
@@ -13,7 +13,7 @@ merge the release PR
   -> release-please.yml: tag vX.Y.Z and a draft GitHub release for that merge commit
   -> release.yml (tag, sha)
        verify       cargo xtask release verify        tag, commit, versions, changelog agree
-       package      cargo xtask check, cargo xtask package --check --tag --source-sha
+       package      cargo xtask check, cargo xtask package --check --appimage --tag --source-sha
        performance  performance.yml on the GPU runner: cargo xtask release measure
        gate         cargo xtask release gate          reports bound to the packaged binary
        publish      check checksums, draft, and tag; upload assets; publish the draft
@@ -47,7 +47,10 @@ Do these in GitHub. The repository holds no credentials.
 - [ ] Branch protection on `main`, so that `github.ref_protected` is true. Required checks: `check`, `deny`, `package`.
 - [ ] Squash merges only. PR titles follow Conventional Commits (`feat:`, `fix:`, `perf:`); they drive the changelog.
 - [ ] Tag ruleset: allow the release token's user to create `v*` tags and protect the tags from updates and deletions.
-- [ ] Rehearse: run `release.yml` by hand with `dry_run: true` on a test tag.
+- [ ] Rehearse: run `release.yml` by hand with `dry_run: true` and a verified test tag
+      that contains the AppImage implementation. Check the package artifact for the
+      three assets and their checksums. Download the AppImage and run a command in
+      its terminal on Ubuntu 24.04 with Wayland.
 - [ ] Set repository variable `RETRO_RELEASE_ENABLED` to `true`.
 - [ ] After the first release, remove `release-as` from `release-please-config.json`.
 
@@ -56,6 +59,12 @@ Do these in GitHub. The repository holds no credentials.
 `x86_64-unknown-linux-gnu`, built on `ubuntu-24.04` (glibc 2.39 or newer at runtime).
 The archive is `retro-app-x86_64-unknown-linux-gnu.tar.xz` with a `.sha256` file. It holds `retro-term`,
 `LICENSE`, `README.md`, and `CHANGELOG.md`.
+
+The same release includes `retro-term-vX.Y.Z-x86_64.AppImage` and
+`retro-term-vX.Y.Z-appimage-runtime-source.tar.xz`, each with a `.sha256` file.
+The source archive contains the pinned runtime's source, dependency archives,
+license texts, and relinking instructions. The AppImage uses the same binary
+as the archive and targets Ubuntu 24.04 x86_64 with Wayland.
 
 Runtime needs: a native Wayland session, the Wayland client library, `libxkbcommon`, a Vulkan loader and driver,
 and a system monospace font. See [development](development.md).
@@ -100,10 +109,15 @@ Use the override only on purpose. It does not make the evidence valid.
 
 ```sh
 cargo xtask package --check
+bash packaging/appimage/fetch-tools.sh
+cargo xtask package --check --appimage
 cargo xtask release verify --tag v0.1.0 --source-sha "$(git rev-parse HEAD)"
 cargo xtask release gate --identity target/xtask/package/identity.json --reports target/perf/release \
   --gate benchmarks/release-gate.toml --source-sha "$(git rev-parse HEAD)"
 ```
 
 `package --check` needs the pinned `dist` (`cargo xtask doctor` prints the install command).
+`--appimage` also needs `desktop-file-utils` and the downloads from `fetch-tools.sh`.
+It checks the launcher in extract-and-run mode and compares the extracted
+AppImage binary checksum with the archive binary checksum.
 `release measure` needs the GPU host of [performance](performance.md). None of these commands tag, upload, or publish.

@@ -1,16 +1,20 @@
-# retro-term
+# Stable Retro Term
 
-A terminal emulator with a retro CRT look, written in Rust.
-
-Status: in development. There is no release yet. The terminal runs from source with
-CRT profiles, tabs, splits, and Quick Settings.
+Stable Retro Term (SRT) is a Rust terminal emulator with CRT profiles, tabs,
+splits, and Quick Settings.
 
 ## Platform
 
 Linux on x86_64, in a native Wayland session. X11, macOS, and Windows are not supported.
 See [usage](docs/usage.md) for the runtime requirements.
 
-## Build and run
+## Install
+
+Download the x86_64 AppImage and its checksum from [GitHub Releases](https://github.com/verdonarthur/stable-retro-term/releases).
+The AppImage targets Ubuntu 24.04 in a native Wayland session. See the
+[launch commands and requirements](docs/usage.md#run-the-appimage).
+
+## Build and run from source
 
 ```sh
 cargo build --locked --release -p retro-app --bin retro-term

@@ -1,5 +1,7 @@
 //! `cargo xtask package --check`: build the release archive with `dist` and check it. Never publishes.
 
+mod appimage;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -26,6 +28,9 @@ pub struct Args {
     /// Required: build and check only.
     #[arg(long)]
     check: bool,
+    /// Also build and check the x86_64 AppImage and runtime source archive.
+    #[arg(long, requires = "check")]
+    appimage: bool,
     /// Release tag (vX.Y.Z). Also verifies the tag, versions, and changelog.
     #[arg(long, value_name = "TAG")]
     tag: Option<String>,
@@ -184,9 +189,20 @@ fn package_steps(args: &Args, root: &Path) -> Result<Vec<Step>, Failure> {
         return Ok(steps);
     }
 
+    let version = workspace_version(root)?;
+    let binary_sha = sha256_file(&binary_path)?;
+    if args.appimage
+        && !passed(
+            &mut steps,
+            appimage::build(root, &distrib, &binary_path, &binary_sha, &version),
+        )
+    {
+        return Ok(steps);
+    }
+
     let identity = Identity {
         schema: 1,
-        version: workspace_version(root)?,
+        version,
         tag: args.tag.clone(),
         source_sha: head,
         dirty: !output("git", &["status", "--porcelain"], root)?.is_empty(),
@@ -199,7 +215,7 @@ fn package_steps(args: &Args, root: &Path) -> Result<Vec<Step>, Failure> {
         },
         binary: Binary {
             path: relative(root, &binary_path),
-            sha256: sha256_file(&binary_path)?,
+            sha256: binary_sha,
             member,
         },
     };

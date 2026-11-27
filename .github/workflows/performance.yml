@@ -83,9 +83,10 @@ jobs:
           path: target
       - name: Check and extract the package
         run: |
-          (cd target/distrib && sha256sum -c ./*.sha256)
+          archive=retro-app-x86_64-unknown-linux-gnu.tar.xz
+          (cd target/distrib && sha256sum -c "$archive.sha256")
           mkdir -p target/xtask/package/extract
-          tar -xJf target/distrib/*.tar.xz -C target/xtask/package/extract
+          tar -xJf "target/distrib/$archive" -C target/xtask/package/extract
       - name: Measure every release preset
         run: >-
           cargo xtask release measure --identity target/xtask/package/identity.json

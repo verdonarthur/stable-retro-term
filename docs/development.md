@@ -18,7 +18,7 @@ install command. It never installs anything.
 | `cargo xtask check --step clippy` / `--skip deny` | Run only, or leave out, some steps |
 | `cargo xtask check --allow-missing` | Do not fail because a pinned tool is not installed |
 | `cargo xtask run` | Launch the Wayland terminal with development diagnostics and your [configuration](configuration.md) |
-| `cargo xtask package --check [--tag vX.Y.Z --source-sha <sha>]` | Build the release archive with the pinned `dist` and check it. Never publishes |
+| `cargo xtask package --check [--appimage] [--tag vX.Y.Z --source-sha <sha>]` | Build and check the release archive and optional AppImage assets. Packaging is local |
 | `cargo xtask release verify --tag vX.Y.Z --source-sha <sha>` | Check that tag, commit, versions, lockfile, manifest, and changelog agree |
 | `cargo xtask release measure --identity <file> --gate <file> --baseline alacritty --output-dir <dir>` | Measure the packaged binary for every gate preset (GPU host only) |
 | `cargo xtask release gate --identity <file> --reports <dir> --gate <file> --source-sha <sha> [--allow-failed-gate]` | Decide from report files whether the release may publish |
@@ -90,5 +90,5 @@ under `docs/AI/`. `--force` removes it anyway, after it copies those `docs/AI/` 
 
 `.github/workflows/ci.yml` runs on pull requests and pushes to `main`. Jobs: `check`
 (`cargo xtask check --skip deny`), `deny` (`cargo xtask check --step deny`), and `package`
-(`cargo xtask package --check`). On failure, `target/xtask/` is uploaded
+(`cargo xtask package --check --appimage`). On failure, `target/xtask/` is uploaded
 as an artifact. The release workflows are described in [releasing](releasing.md). Dependabot opens weekly grouped updates for Cargo and GitHub Actions; nothing merges automatically.
