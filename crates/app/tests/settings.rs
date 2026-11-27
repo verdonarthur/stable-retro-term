@@ -292,6 +292,27 @@ fn effects_are_editable_and_categories_cycle() {
 }
 
 #[test]
+fn general_lists_every_item_with_one_selection() {
+    let mut settings = open(None);
+    let initial = settings.category().unwrap();
+    assert_eq!(initial.items.len(), 9);
+    assert!(initial.items.last().unwrap().0.contains("Frame blue"));
+    assert!(initial.items[0].1);
+
+    for _ in 1..initial.items.len() {
+        assert_eq!(settings.key(Key::Down), Outcome::Redraw);
+    }
+    assert_eq!(settings.key(Key::Down), Outcome::Nothing);
+    let category = settings.category().unwrap();
+    let selected: Vec<_> = category
+        .items
+        .iter()
+        .filter(|(_, selected)| *selected)
+        .collect();
+    assert_eq!(selected, [category.items.last().unwrap()]);
+}
+
+#[test]
 fn profile_list_selects_a_profile_before_saving() {
     let mut settings = open(None);
     assert_eq!(settings.key(Key::BrowseProfiles), Outcome::Redraw);

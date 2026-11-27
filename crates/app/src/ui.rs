@@ -4,6 +4,7 @@ use retro_renderer::scene::{Cluster, Glyph, Rect, Rgb, Scene};
 use unicode_width::UnicodeWidthChar;
 
 use crate::layout;
+use crate::settings::{Category, CategoryFooter};
 
 const DIVIDER: Rgb = Rgb(90, 90, 90);
 const TAB: Rgb = Rgb(40, 40, 40);
@@ -114,15 +115,12 @@ pub(crate) fn full_panel(
     cell: [u32; 2],
     scroll: usize,
 ) {
-    let [width, height] = cell;
-    let columns = (window.width / width).saturating_sub(2) as usize;
-    let rows = (window.height / height).saturating_sub(2) as usize;
-    if columns < 2 || rows == 0 {
-        scene.glyphs.clear();
-        scene.fill(window, TAB);
+    let (columns, rows) = full_panel_size(window, cell);
+    if columns == 0 || rows == 0 {
+        clear_full_panel(scene, window);
         return;
     }
-    let wrapped = wrap_panel(lines, columns - 1);
+    let wrapped = wrap_panel(lines, columns);
     let last_start = wrapped.len().saturating_sub(rows);
     let start = wrapped
         .iter()
@@ -138,32 +136,205 @@ pub(crate) fn full_panel_scroll_limit(
     lines: &[(String, bool)],
     cell: [u32; 2],
 ) -> usize {
-    let [width, height] = cell;
-    let columns = (window.width / width).saturating_sub(3).max(1) as usize;
-    let rows = (window.height / height).saturating_sub(2) as usize;
-    wrap_panel(lines, columns).len().saturating_sub(rows)
+    let (columns, rows) = full_panel_size(window, cell);
+    wrap_panel(lines, columns.max(1)).len().saturating_sub(rows)
+}
+
+fn full_panel_size(window: Rect, [width, height]: [u32; 2]) -> (usize, usize) {
+    // Leave two cells for padding and one column for fractional font advances.
+    (
+        (window.width / width).saturating_sub(3) as usize,
+        (window.height / height).saturating_sub(2) as usize,
+    )
+}
+
+fn clear_full_panel(scene: &mut Scene, window: Rect) {
+    scene.glyphs.clear();
+    scene.fill(window, TAB);
+}
+
+pub(crate) fn settings_category(
+    scene: &mut Scene,
+    window: Rect,
+    category: &Category,
+    cell: [u32; 2],
+) {
+    let (columns, rows) = full_panel_size(window, cell);
+    if columns == 0 || rows == 0 {
+        clear_full_panel(scene, window);
+        return;
+    }
+    let lines = category_lines(category, columns, rows);
+    draw_panel(scene, window, &lines, cell);
+}
+
+fn category_lines(category: &Category, columns: usize, rows: usize) -> Vec<(String, bool)> {
+    let selected = category
+        .items
+        .iter()
+        .position(|(_, selected)| *selected)
+        .expect("a settings category has a selected item");
+    let items: Vec<_> = category
+        .items
+        .iter()
+        .map(|(text, selected)| wrap_line(text, *selected, columns))
+        .collect();
+    let mut header: Vec<_> = category
+        .header
+        .iter()
+        .flat_map(|text| wrap_line(text, false, columns))
+        .collect();
+    let essentials: Vec<_> = category
+        .footer
+        .status
+        .as_deref()
+        .into_iter()
+        .chain([category.footer.help])
+        .flat_map(|text| wrap_line(text, false, columns))
+        .collect();
+    let mut footer = vec![(String::new(), false)];
+    footer.extend(
+        category
+            .footer
+            .details
+            .iter()
+            .flat_map(|text| wrap_line(text, false, columns)),
+    );
+    footer.push((String::new(), false));
+    footer.extend_from_slice(&essentials);
+
+    if let Some(list) = fit_category(&items, selected, columns, rows, &header, &footer) {
+        return list;
+    }
+    header.retain(|(text, _)| !text.is_empty());
+    footer.retain(|(text, _)| !text.is_empty());
+    fit_category(&items, selected, columns, rows, &header, &footer)
+        .or_else(|| fit_category(&items, selected, columns, rows, &[], &essentials))
+        .unwrap_or_else(|| compact_category(category, selected, columns, rows))
+}
+
+fn fit_category(
+    items: &[Vec<(String, bool)>],
+    selected: usize,
+    columns: usize,
+    rows: usize,
+    header: &[(String, bool)],
+    footer: &[(String, bool)],
+) -> Option<Vec<(String, bool)>> {
+    let available = rows.checked_sub(header.len() + footer.len())?;
+    let total = items.len();
+    if items.iter().map(Vec::len).sum::<usize>() <= available {
+        return Some(
+            header
+                .iter()
+                .chain(items.iter().flatten())
+                .chain(footer)
+                .cloned()
+                .collect(),
+        );
+    }
+
+    // Try earlier starts first so equal-sized ranges keep the earlier items visible.
+    let mut best = 0..0;
+    let mut top = Vec::new();
+    for start in 0..=selected {
+        let mut height = 0;
+        for (index, item) in items.iter().enumerate().skip(start) {
+            height += item.len();
+            if height > available {
+                break;
+            }
+            let end = index + 1;
+            if end <= selected || end - start <= best.len() {
+                continue;
+            }
+            let cue = wrap_line(&range_text(start, end, total), false, columns);
+            if height + cue.len() + usize::from(end < total) <= available {
+                best = start..end;
+                top = cue;
+            }
+        }
+    }
+    if best.is_empty() {
+        return None;
+    }
+    let bottom = (best.end < total).then(|| (" ↓".into(), false));
+    Some(
+        header
+            .iter()
+            .cloned()
+            .chain(top)
+            .chain(items[best].iter().flatten().cloned())
+            .chain(bottom)
+            .chain(footer.iter().cloned())
+            .collect(),
+    )
+}
+
+fn range_text(start: usize, end: usize, total: usize) -> String {
+    let arrow = if start > 0 { "↑ " } else { "" };
+    format!(" {arrow}{}–{end} of {total}", start + 1)
+}
+
+fn compact_category(
+    category: &Category,
+    selected: usize,
+    columns: usize,
+    rows: usize,
+) -> Vec<(String, bool)> {
+    let CategoryFooter { status, help, .. } = &category.footer;
+    let mut remaining = rows - 1;
+    let mut take_line = |text: &str| {
+        if remaining == 0 {
+            return None;
+        }
+        remaining -= 1;
+        Some((truncate(text.trim_start(), columns), false))
+    };
+    let help = take_line(if columns_of(help) <= columns {
+        help
+    } else {
+        "↑↓ ←→ Enter Esc"
+    });
+    let status = status.as_deref().and_then(&mut take_line);
+    let total = category.items.len();
+    let top = (total > 1)
+        .then(|| range_text(selected, selected + 1, total))
+        .as_deref()
+        .and_then(&mut take_line);
+    let bottom = (selected + 1 < total).then(|| take_line("↓")).flatten();
+    let item = truncate(category.items[selected].0.trim_start(), columns);
+    top.into_iter()
+        .chain([(item, true)])
+        .chain(bottom)
+        .chain(status)
+        .chain(help)
+        .collect()
 }
 
 fn wrap_panel(lines: &[(String, bool)], columns: usize) -> Vec<(String, bool)> {
-    // Leave one column of slack for fractional font advances.
+    lines
+        .iter()
+        .flat_map(|(text, selected)| wrap_line(text, *selected, columns))
+        .collect()
+}
+
+fn wrap_line(mut rest: &str, selected: bool, columns: usize) -> Vec<(String, bool)> {
     let mut wrapped = Vec::new();
-    for (line, selected) in lines {
-        let mut rest = line.as_str();
-        while columns_of(rest) > columns {
-            let prefix = truncate(rest, columns);
-            let end = prefix
-                .trim_end()
-                .rfind(' ')
-                .filter(|&index| index > 1)
-                .unwrap_or(prefix.len());
-            if end == 0 {
-                break;
-            }
-            wrapped.push((rest[..end].to_owned(), *selected));
-            rest = rest[end..].trim_start();
+    while columns_of(rest) > columns {
+        let prefix = truncate(rest, columns);
+        let end = prefix
+            .trim_end()
+            .rfind(' ')
+            .filter(|&index| index > 1)
+            .unwrap_or(prefix.len());
+        if end == 0 {
+            break;
         }
-        wrapped.push((rest.to_owned(), *selected));
+        wrapped.push((rest[..end].to_owned(), selected));
+        rest = rest[end..].trim_start();
     }
+    wrapped.push((rest.to_owned(), selected));
     wrapped
 }
 
@@ -231,6 +402,8 @@ fn truncate(label: &str, columns: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Overrides;
+    use crate::settings::{Key, Settings};
 
     fn bar(width: u32) -> Rect {
         Rect {
@@ -257,6 +430,124 @@ mod tests {
                 .iter()
                 .any(|glyph| glyph.cluster.text.contains("Ctrl+PageUp"))
         );
+    }
+
+    fn example_category(count: usize, selected: usize) -> Category {
+        Category {
+            header: vec!["General".into()],
+            items: (1..=count)
+                .map(|index| (format!("Item {index}"), index == selected))
+                .collect(),
+            footer: CategoryFooter {
+                details: vec![],
+                status: None,
+                help: "Up/Down select  Esc cancel",
+            },
+        }
+    }
+
+    #[test]
+    fn settings_category_uses_all_available_rows() {
+        for count in [1, 9] {
+            let category = example_category(count, count);
+            let lines = category_lines(&category, 60, count + 4);
+            assert_eq!(lines[1..=count], category.items);
+            assert_eq!(lines.last().unwrap().0, category.footer.help);
+            assert_eq!(lines.len(), count + 4);
+        }
+    }
+
+    #[test]
+    fn settings_category_marks_overflow_at_each_edge() {
+        for (selected, range, hidden_below) in [
+            (1, "1–3 of 9", true),
+            (5, "↑ 3–5 of 9", true),
+            (9, "↑ 6–9 of 9", false),
+        ] {
+            let category = example_category(9, selected);
+            let lines = category_lines(&category, 60, 9);
+            assert_eq!(lines[1].0.trim(), range);
+            let item_count = if hidden_below { 3 } else { 4 };
+            assert_eq!(
+                lines[2 + item_count].0.trim(),
+                if hidden_below { "↓" } else { "" }
+            );
+            let highlighted: Vec<_> = lines.iter().filter(|(_, selected)| *selected).collect();
+            assert_eq!(highlighted, [&category.items[selected - 1]]);
+            assert_eq!(lines.last().unwrap().0, category.footer.help);
+        }
+    }
+
+    #[test]
+    fn settings_category_counts_wrapped_items_once_and_keeps_the_footer() {
+        let mut category = example_category(9, 5);
+        category.items[4].0 = "Selected item with a long value".into();
+        category.footer.details = vec!["File /a/very/long/settings-path".into()];
+        category.footer.status = Some("Status with a long explanation".into());
+        let lines = category_lines(&category, 16, 17);
+        assert_eq!(lines[1].0.trim(), "↑ 4–5 of 9");
+        let highlighted: Vec<_> = lines
+            .iter()
+            .filter_map(|(line, selected)| selected.then_some(line.as_str()))
+            .collect();
+        assert_eq!(highlighted, ["Selected item", "with a long", "value"]);
+        assert!(lines.iter().any(|(line, _)| line.contains("/a/very/long")));
+        assert!(lines.iter().any(|(line, _)| line.contains("explanation")));
+        assert!(lines.iter().any(|(line, _)| line.contains("Up/Down")));
+        assert_eq!(lines.last().unwrap().0, "cancel");
+        assert!(lines.len() <= 17);
+    }
+
+    #[test]
+    fn settings_category_draws_in_a_window_with_at_most_one_row() {
+        let mut category = example_category(9, 5);
+        category.items[4].0 = "界界界".into();
+        for rows in [0, 1] {
+            let window = Rect {
+                height: (rows + 2) * 20,
+                ..bar(6 * 8)
+            };
+            let mut scene = Scene::new(Rgb(0, 0, 0), 14, 20);
+            settings_category(&mut scene, window, &category, [8, 20]);
+            assert_eq!(scene.fills[0].bounds, window);
+            if rows == 0 {
+                assert!(scene.glyphs.is_empty());
+            } else {
+                assert_eq!(scene.glyphs.len(), 1);
+                assert_eq!(scene.glyphs[0].cluster.text, "界");
+                assert!(scene.glyphs[0].cluster.bold);
+            }
+        }
+    }
+
+    #[test]
+    fn settings_category_keeps_the_selection_and_help_after_resize() {
+        let mut settings = Settings::open(Some("config.toml".into()), None, Overrides::default());
+        for _ in 0..8 {
+            settings.key(Key::Down);
+        }
+        let category = settings.category().unwrap();
+        for (height, count) in [(16 * 20, 4), (22 * 20, 9)] {
+            let window = Rect { height, ..bar(800) };
+            let mut scene = Scene::new(Rgb(0, 0, 0), 14, 20);
+            settings_category(&mut scene, window, &category, [8, 20]);
+            let has_text = |text: &str| {
+                scene
+                    .glyphs
+                    .iter()
+                    .any(|glyph| glyph.cluster.text.contains(text))
+            };
+            assert_eq!(has_text("↑ 6–9 of 9"), count == 4);
+            assert_eq!(has_text("Preset"), count == 9);
+            assert!(has_text("Up/Down select"));
+            let highlighted: Vec<_> = scene
+                .glyphs
+                .iter()
+                .filter(|glyph| glyph.cluster.bold)
+                .collect();
+            assert_eq!(highlighted.len(), 1);
+            assert!(highlighted[0].cluster.text.contains("Frame blue"));
+        }
     }
 
     #[test]
