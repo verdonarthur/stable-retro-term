@@ -91,7 +91,12 @@ jobs:
         env:
           VERSION: ${{ steps.tools.outputs.dist }}
         run: cargo install --locked "cargo-dist@${VERSION}"
-      - run: cargo xtask package --check
+      - name: Set up AppImage tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y desktop-file-utils
+          bash packaging/appimage/fetch-tools.sh
+      - run: cargo xtask package --check --appimage
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

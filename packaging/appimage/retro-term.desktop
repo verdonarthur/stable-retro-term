@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Stable Retro Term
+Exec=retro-term
+Icon=retro-term
+Terminal=false
+Categories=System;TerminalEmulator;

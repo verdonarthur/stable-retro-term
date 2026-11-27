@@ -55,6 +55,15 @@ fn package_refuses_without_check() {
 }
 
 #[test]
+fn package_appimage_requires_check_and_is_optional() {
+    assert_eq!(code(&xtask(root(), &["package", "--appimage"])), 2);
+    let out = xtask(root(), &["package", "--help"]);
+    let help = String::from_utf8(out.stdout).unwrap();
+    assert!(help.contains("Usage: xtask package [OPTIONS]"));
+    assert!(help.contains("--appimage"));
+}
+
+#[test]
 fn package_help_says_never_publishes() {
     let out = xtask(root(), &["package", "--help"]);
     assert_eq!(code(&out), 0);

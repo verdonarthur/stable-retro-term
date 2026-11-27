@@ -1,11 +1,11 @@
 # Configuration
 
-retro-term reads one TOML file. [`assets/config.example.toml`](../assets/config.example.toml)
+Stable Retro Term reads one TOML file. [`assets/config.example.toml`](../assets/config.example.toml)
 shows a starting configuration.
 
 ## File location
 
-1. `retro-term --config PATH` reads `PATH`. If the file cannot be read, retro-term exits with an error.
+1. `retro-term --config PATH` reads `PATH`. If the file cannot be read, the command exits with an error.
 2. Otherwise `$XDG_CONFIG_HOME/retro-term/config.toml`, when `XDG_CONFIG_HOME` is set to an absolute path.
 3. Otherwise `$HOME/.config/retro-term/config.toml`.
 
@@ -50,7 +50,7 @@ Set an individual animation or glow effect to 0 to turn it off.
 | `terminal.scrollback_lines` | integer | `10000` | 0 to 100000 |
 | `shell.program` | string | `""` | `""` selects your login shell |
 | `shell.args` | array of strings | `[]` | Requires `shell.program` |
-| `shell.working_directory` | string | `""` | `""` inherits the directory of retro-term |
+| `shell.working_directory` | string | `""` | `""` inherits the working directory of Stable Retro Term |
 
 Unknown keys are errors.
 
@@ -59,15 +59,15 @@ Unknown keys are errors.
 Press Ctrl+Shift+R to read the file again. Press Ctrl+Shift+S to open the [settings panel](#settings-panel).
 
 - Applies to the open window: `preset`, the `effects` keys, and the `font` keys. A font change resizes the grid and the shell.
-- Applies to new panes and tabs only: the `terminal` and `shell` keys. retro-term shows a message when they change.
+- The `terminal` and `shell` keys apply to new panes and tabs only. Stable Retro Term shows a message when they change.
 
 ## Errors
 
-retro-term checks the whole file before it changes anything. If the file is invalid, retro-term keeps the
+Stable Retro Term checks the whole file before it changes anything. If the file is invalid, it keeps the
 last valid configuration. The error shows on the last row of the window and on stderr, with the file,
 line, column, and key or allowed range. The next key press or a successful reload removes it.
 
-If the file is invalid at startup, retro-term starts with the defaults and shows the error.
+If the file is invalid at startup, Stable Retro Term starts with the defaults and shows the error.
 
 ## Settings panel
 

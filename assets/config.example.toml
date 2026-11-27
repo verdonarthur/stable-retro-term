@@ -1,4 +1,4 @@
-# retro-term configuration. Every key shows its default value.
+# Stable Retro Term configuration. Every key shows its default value.
 # Location: $XDG_CONFIG_HOME/retro-term/config.toml or ~/.config/retro-term/config.toml.
 # Reload with Ctrl+Shift+R. Ctrl+Shift+P opens the settings panel. See docs/configuration.md.
 
@@ -28,5 +28,5 @@ scrollback_lines = 10000
 program = ""
 # Arguments for program. Requires program.
 args = []
-# Start directory. Empty inherits the directory of retro-term.
+# Start directory. Empty inherits the working directory of Stable Retro Term.
 working_directory = ""

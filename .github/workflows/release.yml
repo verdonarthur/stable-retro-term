@@ -114,17 +114,24 @@ jobs:
         run: cargo install --locked "cargo-dist@${VERSION}"
       # Workflow linters already ran in PR CI; the tagged revision is rechecked for code and dependencies.
       - run: cargo xtask check --skip actionlint --skip zizmor
+      - name: Set up AppImage tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y desktop-file-utils
+          bash packaging/appimage/fetch-tools.sh
       - name: Package the tagged revision
         env:
           TAG: ${{ inputs.tag }}
           SHA: ${{ needs.verify.outputs.sha }}
-        run: cargo xtask package --check --tag "$TAG" --source-sha "$SHA"
+        run: cargo xtask package --check --appimage --tag "$TAG" --source-sha "$SHA"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: package-${{ inputs.tag }}
           path: |
             target/distrib/*.tar.xz
             target/distrib/*.tar.xz.sha256
+            target/distrib/*.AppImage
+            target/distrib/*.AppImage.sha256
             target/xtask/package/identity.json
           if-no-files-found: error
           retention-days: 30
@@ -230,7 +237,21 @@ jobs:
           path: gate
       - name: Check checksums
         working-directory: package/distrib
-        run: sha256sum -c ./*.sha256
+        run: |
+          for asset in retro-app-x86_64-unknown-linux-gnu.tar.xz \
+              "retro-term-${TAG}-x86_64.AppImage" \
+              "retro-term-${TAG}-appimage-runtime-source.tar.xz"; do
+            if [ ! -s "$asset" ] || [ ! -s "$asset.sha256" ]; then
+              echo "::error::missing release asset or checksum for $asset"
+              exit 1
+            fi
+            read -r checksum filename < "$asset.sha256"
+            actual="$(sha256sum -- "$asset")"
+            if [ "${filename#\*}" != "$asset" ] || [ "$checksum" != "${actual%% *}" ]; then
+              echo "::error::checksum mismatch for $asset"
+              exit 1
+            fi
+          done
       - name: Check the draft release and the tag
         run: |
           gh release view "$TAG" --json tagName --jq .tagName | grep -Fxq "$TAG"
